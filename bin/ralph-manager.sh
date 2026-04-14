@@ -27,7 +27,7 @@ NUM_IMPLEMENTERS=$(config_get "$CONFIG_FILE" '.team.implementers' '3')
 NUM_REVIEWERS=$(config_get "$CONFIG_FILE" '.team.reviewers' '2')
 MAX_RETRIES=$(config_get "$CONFIG_FILE" '.team.max_retries_per_task' '3')
 MAX_ITERATIONS=$(config_get "$CONFIG_FILE" '.loop.max_iterations' '50')
-AI_COMMAND=$(config_get "$CONFIG_FILE" '.ai_tool_command' 'claude --dangerously-skip-permissions -p')
+AI_COMMAND=$(config_get "$CONFIG_FILE" '.ai_tool_command' 'claude -p')
 AI_TOOL=$(config_get "$CONFIG_FILE" '.ai_tool' 'claude-code')
 COMPLETION_PROMISE=$(config_get "$CONFIG_FILE" '.loop.completion_promise' 'ALL_TASKS_COMPLETE')
 

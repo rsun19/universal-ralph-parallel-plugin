@@ -14,20 +14,35 @@ Claude Code has the deepest integration because it supports stop hooks (for nati
 # Install Claude Code
 npm install -g @anthropic-ai/claude-code
 
-# Initialize your project
-ralph init /path/to/project --tool claude-code
+# Run the setup wizard (select claude-code when asked)
+ralph init
 
 # Start
-ralph start -p PROMPT.md -r /path/to/project -t claude-code
+ralph start -p "Build a REST API for todos with CRUD, validation, and tests"
 ```
 
 ### What the adapter does
 
-- Sets the AI command to `claude --dangerously-skip-permissions --model sonnet -p`
-- `--dangerously-skip-permissions` lets Claude run shell commands and edit files without asking for confirmation each time (required for unattended loops)
+- Sets the AI command to `claude --model <model> -p`
 - `-p` means "read the prompt from stdin"
 - Installs a stop hook that intercepts Claude's exit attempts and feeds the prompt back, creating the loop inside a single Claude session
 - Installs a `TaskCompleted` hook that checks for placeholder code before allowing task completion
+
+### Permissions
+
+By default, Ralph respects Claude Code's permission config. For unattended loops, pre-configure permissions in `~/.claude/settings.json`:
+
+```json
+{
+  "permissions": {
+    "allow": ["Bash", "Read", "Edit", "WebFetch"]
+  }
+}
+```
+
+Or skip all prompts at runtime with `ralph start --allow-all` (adds `--dangerously-skip-permissions`).
+
+Docs: [code.claude.com/docs/en/permissions](https://code.claude.com/docs/en/permissions)
 
 ### Native Agent Teams mode
 
@@ -42,40 +57,38 @@ If you pass `--claude-teams`, Ralph doesn't use its own shell-based agent spawni
 ### Setup
 
 ```bash
-# Initialize your project
-ralph init /path/to/project --tool cursor
+# Install the Cursor CLI
+curl https://cursor.com/install -fsS | bash
 
-# This installs .cursor/rules/ralph-loop.mdc into your project
+# Run the setup wizard (select cursor when asked)
+ralph init
+
+# Start
+ralph start -p "Build a REST API for todos with CRUD, validation, and tests"
 ```
 
 ### What the adapter does
 
-- Installs a Cursor **rule file** (`.cursor/rules/ralph-loop.mdc`) that instructs Cursor's AI to follow Ralph methodology: read fix_plan.md, pick the most important task, implement fully, write tests, update the plan, commit
-- If the `cursor` CLI is available, the adapter uses `cursor --cli --prompt` to pipe prompts
-- If no CLI is available, it falls back to writing prompts to `.cursor/ralph-prompt.md` for you to open in Cursor manually
+- Sets the AI command to `agent --model <model> -p`
+- `-p` means "read the prompt from stdin and print the result" (non-interactive)
+- `--model` selects the model (sonnet, opus, gpt-4.1, etc.)
+- Ralph's full bash orchestration works: parallel workers, reviewers, retry loops, atomic task claiming
 
-### Fully automated mode
+### Permissions
 
-If Cursor exposes a CLI (varies by version and platform), Ralph can drive it automatically:
+By default, Ralph respects Cursor's permission config. For unattended loops, pre-configure permissions in `~/.cursor/cli-config.json`:
 
-```bash
-ralph start -p PROMPT.md -r /path/to/project -t cursor
+```json
+{
+  "permissions": {
+    "allow": ["Shell(*)", "Read(**)", "Write(**)", "Mcp(*:*)"]
+  }
+}
 ```
 
-### Semi-automated mode
+Or skip all prompts at runtime with `ralph start --allow-all` (adds `--force`).
 
-If no Cursor CLI is available, use the helper script that the adapter installs:
-
-```bash
-cd /path/to/project
-.cursor/ralph-run.sh PROMPT.md 20
-```
-
-This writes the prompt, waits for you to run it in Cursor, and repeats up to 20 times.
-
-### Using Cursor rules only (no ralph CLI)
-
-You can also just use the rule file without the `ralph` CLI at all. After `ralph init`, the `.cursor/rules/ralph-loop.mdc` rule tells Cursor's AI to follow Ralph methodology whenever you interact with it. Create a `fix_plan.md` manually, open Cursor, and ask it to "work on the next item in fix_plan.md."
+Docs: [cursor.com/docs/cli/reference/permissions](https://cursor.com/docs/cli/reference/permissions)
 
 ---
 
@@ -86,56 +99,29 @@ You can also just use the rule file without the `ralph` CLI at all. After `ralph
 ### Setup
 
 ```bash
-# Install GitHub Copilot CLI
-gh extension install github/gh-copilot
+# Install the Copilot CLI
+# See: https://docs.github.com/en/copilot/how-tos/set-up/install-copilot-cli
 
-# Initialize your project
-ralph init /path/to/project --tool copilot
+# Run the setup wizard (select copilot when asked)
+ralph init
 
-# This installs .github/copilot-instructions.md into your project
+# Start
+ralph start -p "Build a REST API for todos with CRUD, validation, and tests"
 ```
 
 ### What the adapter does
 
-- Installs `.github/copilot-instructions.md` which provides workspace-level instructions to Copilot
-- If `gh copilot` CLI is available, uses `gh copilot suggest -t shell` for automation
-- Falls back to writing prompts for Copilot Workspace
+- Sets the AI command to `copilot --allow-all --model <model> -p`
+- `--allow-all` skips all permission prompts (always included — see note below)
+- `-p` means "read the prompt from stdin and print the result" (non-interactive)
+- `--model` selects the model (sonnet, opus, gpt-4.1, etc.)
+- Ralph's full bash orchestration works: parallel workers, reviewers, retry loops, atomic task claiming
 
-### How to use
+### Permissions
 
-The primary workflow with Copilot is semi-automated. The instructions file tells Copilot to follow Ralph methodology (read fix_plan.md, pick the most important task, implement fully, test, update the plan). You interact with Copilot in your editor and it follows these guidelines.
+**Copilot CLI does not support config-file-based permissions.** Unlike Claude Code and Cursor, there is no way to pre-approve tool use via a settings file. The only mechanism is the `--allow-all` CLI flag, which Ralph includes by default in the Copilot adapter. Without it, every tool use (shell commands, file writes, etc.) prompts for interactive approval, making unattended loops impossible.
 
-For full automation (if gh copilot CLI supports it):
-
-```bash
-ralph start -p PROMPT.md -r /path/to/project -t copilot
-```
-
----
-
-## Aider
-
-**Adapter:** `generic` (with custom command)
-
-[Aider](https://aider.chat/) is an open-source AI coding tool that works well with Ralph.
-
-### Setup
-
-```bash
-pip install aider-chat
-
-# Edit ralph.config.json
-{
-  "ai_tool": "generic",
-  "ai_tool_command": "aider --message"
-}
-```
-
-### Start
-
-```bash
-ralph start -p PROMPT.md -r /path/to/project
-```
+Docs: [docs.github.com/en/copilot/how-tos/copilot-cli/allowing-tools](https://docs.github.com/en/copilot/how-tos/copilot-cli/allowing-tools)
 
 ---
 

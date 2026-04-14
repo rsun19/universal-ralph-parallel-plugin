@@ -115,11 +115,21 @@ To reduce costs:
 - Write very specific prompts (less AI guessing = fewer iterations)
 - Use a cheaper model in your config
 
-### Claude Code says "permission denied" during loop
+### AI tool asks for permission during loop
 
-Make sure you're using `--dangerously-skip-permissions` in the AI command. The default config includes this, but if you customized `ai_tool_command`, you may have removed it.
+Ralph needs the AI tool to run without interactive approval prompts. You have two options:
 
-Without this flag, Claude Code asks for confirmation on every file edit and shell command, which breaks the automated loop.
+1. **Configure permissions via config file** (recommended):
+   - Claude Code: `~/.claude/settings.json` — [docs](https://code.claude.com/docs/en/permissions)
+   - Cursor: `~/.cursor/cli-config.json` — [docs](https://cursor.com/docs/cli/reference/permissions)
+   - Copilot: no config-based option (see below)
+
+2. **Skip all prompts at runtime:**
+   ```bash
+   ralph start --allow-all -p "your prompt"
+   ```
+
+Copilot CLI does not support config-file-based permissions, so `--allow-all` is always included in the Copilot adapter by default.
 
 ## Inspecting state
 

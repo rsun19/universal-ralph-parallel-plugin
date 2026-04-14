@@ -20,7 +20,7 @@ init_msg_dir "$RALPH_ROOT"
 WORKER_ID="impl-${WORKER_NUM}-$(generate_id)"
 agent_register "$WORKER_ID" "implementer" "$$"
 
-AI_COMMAND=$(config_get "$CONFIG_FILE" '.ai_tool_command' 'claude --dangerously-skip-permissions -p')
+AI_COMMAND=$(config_get "$CONFIG_FILE" '.ai_tool_command' 'claude -p')
 AI_TOOL=$(config_get "$CONFIG_FILE" '.ai_tool' 'claude-code')
 MAX_TASK_ITERATIONS=$(config_get "$CONFIG_FILE" '.loop.max_iterations' '50')
 COMMIT_ON_SUCCESS=$(config_get "$CONFIG_FILE" '.loop.commit_on_success' 'false')

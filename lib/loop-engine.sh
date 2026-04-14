@@ -69,7 +69,7 @@ ralph_loop() {
   require_jq
 
   local ai_command target_dir max_iterations completion_promise commit_on_success
-  ai_command=$(config_get "$config_file" '.ai_tool_command' 'claude --dangerously-skip-permissions')
+  ai_command=$(config_get "$config_file" '.ai_tool_command' 'claude -p')
   target_dir=$(config_get "$config_file" '.target_repo' '.')
   max_iterations=$(config_get "$config_file" '.loop.max_iterations' '0')
   completion_promise=$(config_get "$config_file" '.loop.completion_promise' '')

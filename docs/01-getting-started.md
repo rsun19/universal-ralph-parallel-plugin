@@ -12,7 +12,7 @@ On top of that basic loop, this plugin adds **teams**: a manager agent breaks yo
 
 You need two things installed:
 
-1. **bash** (version 4.0 or later) - already on macOS and Linux
+1. **bash** (version 3.2 or later) — already on macOS and Linux
 2. **jq** - a command-line JSON processor
 
 Install jq if you don't have it:
@@ -30,72 +30,78 @@ sudo dnf install jq
 
 You also need at least one AI coding tool. Any of these work:
 
-| Tool | Install | Notes |
-|------|---------|-------|
-| Claude Code | `npm install -g @anthropic-ai/claude-code` | Best supported; has native Agent Teams mode |
-| Cursor | Download from cursor.com | Works via rules + CLI adapter |
-| GitHub Copilot | `gh extension install github/gh-copilot` | Via gh CLI extension |
-| Aider | `pip install aider-chat` | Open source, works great |
-| Any CLI tool | Must accept a prompt via stdin or flag | Fully configurable |
+| Tool | Install | CLI command |
+|------|---------|-------------|
+| Claude Code | `npm install -g @anthropic-ai/claude-code` | `claude -p` |
+| Cursor | `curl https://cursor.com/install -fsS \| bash` | `agent -p` |
+| GitHub Copilot | [Install Copilot CLI](https://docs.github.com/en/copilot/how-tos/set-up/install-copilot-cli) | `copilot -p` |
+| Any CLI tool | Must accept a prompt via stdin or flag | Configurable via generic adapter |
 
 ## Installation
 
-### Step 1: Clone the plugin
+There are three ways to install Ralph.
+
+### Option A: Clone the repo (development)
 
 ```bash
-git clone <repo-url> ralph-wiggum-cursor-plugin
-cd ralph-wiggum-cursor-plugin
-```
-
-### Step 2: Run the installer
-
-The simplest install just makes everything executable:
-
-```bash
-./install.sh
-```
-
-To also add `ralph` to your system PATH so you can run it from anywhere:
-
-```bash
-./install.sh --link
+git clone <repo-url> ralph-wiggum
+cd ralph-wiggum
+./install.sh          # make scripts executable
+./install.sh --link   # also symlink `ralph` to /usr/local/bin
 ```
 
 Or add the `bin/` directory to your PATH manually in your `~/.zshrc` or `~/.bashrc`:
 
 ```bash
-export PATH="/path/to/ralph-wiggum-cursor-plugin/bin:$PATH"
+export PATH="/path/to/ralph-wiggum/bin:$PATH"
 ```
 
-### Step 3: Initialize Ralph (first time only)
+### Option B: Download a release tarball / binary archive
+
+If you downloaded a `.tar.gz` or `.zip` release (no `git clone`), extract it and install to a prefix like `~/.local` or `/opt/ralph`:
+
+```bash
+tar xzf ralph-wiggum-v1.0.0.tar.gz
+cd ralph-wiggum-v1.0.0
+./install.sh --prefix ~/.local
+```
+
+This copies Ralph's files into `~/.local/share/ralph-wiggum/` and creates a wrapper at `~/.local/bin/ralph` that bakes in the correct `RALPH_ROOT`. If `~/.local/bin` is already in your PATH, you're done. Otherwise, add it:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+### Option C: Manual placement
+
+If you put the Ralph directory somewhere yourself, just set `RALPH_ROOT` and add the binary to PATH:
+
+```bash
+export RALPH_ROOT="/wherever/you/put/ralph-wiggum"
+export PATH="${RALPH_ROOT}/bin:$PATH"
+```
+
+Ralph checks for `RALPH_ROOT` first. If it's set and points to a valid directory (containing `lib/`), Ralph uses it directly — no symlink resolution needed.
+
+### Step 2: Initialize Ralph (first time only)
 
 ```bash
 ralph init
 ```
 
 This launches an interactive setup wizard that asks you:
-- **Target repository path** — where your project lives
+- **Target repository path** — type it, scan for it, or use current directory
 - **AI tool** — which AI tool you want to use (Claude Code, Cursor, Copilot, etc.)
+- **Model** — sonnet, opus, gpt-4.1, etc.
 - **Team size** — how many implementer and reviewer agents
 - **Loop settings** — max iterations per agent
 - **Claude Teams** — whether to use native Agent Teams mode (Claude Code only)
 
-It generates your personal `ralph.config.json` (gitignored) and sets up the target repo with:
-- `AGENT.md` — where Ralph records learnings about your project
-- `fix_plan.md` — the shared task list that Ralph maintains
-- `specs/` — a directory for project specifications
-- Adapter-specific files (e.g., `.cursor/rules/` for Cursor)
+It generates your personal `ralph.config.json` (gitignored).
 
 To edit your config later: `ralph settings`
 
-You can also use **scan mode** to find repos on your filesystem instead of typing a path:
-
-```bash
-ralph scan
-ralph scan ~/projects
-```
-
-### Step 4: Start Ralph
+### Step 3: Start Ralph
 
 ```bash
 ralph start -p "Build a REST API for a bookstore with Express, TypeScript, SQLite, and Jest tests"
@@ -151,22 +157,16 @@ ralph cancel
 
 This kills all agent processes but preserves the task state so you can inspect what happened.
 
-## Standalone mode (scan)
+## Finding repos (scan)
 
-Ralph can run as standalone software, not just as a plugin inside a project. The `ralph scan` command traverses your filesystem to find git repositories, lets you pick one, and then initializes + starts Ralph on it -- all from a single command:
+Don't know the exact path? Use `ralph scan` to find repos on your filesystem:
 
 ```bash
-# Scan default locations (~, ~/projects, ~/code, ~/dev, etc.)
-ralph scan
-
-# Scan a specific directory tree
-ralph scan ~/work
-
-# Scan and auto-start with an inline prompt
-ralph scan ~/work -p "Build a REST API for the bookstore"
+ralph scan              # scans common directories
+ralph scan ~/work       # scans a specific folder
 ```
 
-This means you don't need to `cd` into a project or know its exact path. Ralph finds it for you.
+Ralph finds git repositories (up to 4 levels deep), shows a numbered list, and lets you pick one to start working on.
 
 ## Next steps
 
