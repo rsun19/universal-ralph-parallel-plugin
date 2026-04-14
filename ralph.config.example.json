@@ -1,0 +1,29 @@
+{
+  "version": "1.0.0",
+  "target_repo": ".",
+  "prompt_text": "",
+  "ai_tool": "claude-code",
+  "ai_tool_command": "claude --dangerously-skip-permissions -p",
+  "model": "sonnet",
+  "team": {
+    "implementers": 3,
+    "reviewers": 2,
+    "max_retries_per_task": 3
+  },
+  "loop": {
+    "max_iterations": 50,
+    "completion_promise": "ALL_TASKS_COMPLETE",
+    "commit_on_success": true,
+    "pause_between_iterations_sec": 2
+  },
+  "claude_teams": {
+    "enabled": false,
+    "teammate_mode": "in-process"
+  },
+  "review": {
+    "check_tests": true,
+    "check_placeholders": true,
+    "check_spec_compliance": true,
+    "auto_approve_on_pass": false
+  }
+}

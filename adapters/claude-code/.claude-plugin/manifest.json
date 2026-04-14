@@ -1,0 +1,23 @@
+{
+  "name": "ralph-wiggum-universal",
+  "version": "1.0.0",
+  "description": "Universal Ralph Wiggum - iterative AI agent team orchestrator with manager, implementers, and reviewers",
+  "commands": [
+    "commands/ralph-team.md",
+    "commands/cancel-ralph.md"
+  ],
+  "hooks": {
+    "Stop": ["hooks/stop-hook.sh"],
+    "TaskCompleted": ["hooks/task-completed.sh"]
+  },
+  "agents": [
+    "agents/manager.md",
+    "agents/implementer.md",
+    "agents/reviewer.md"
+  ],
+  "scripts": [
+    "scripts/setup-team.sh",
+    "scripts/cancel-team.sh",
+    "scripts/team-status.sh"
+  ]
+}

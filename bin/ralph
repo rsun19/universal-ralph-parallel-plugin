@@ -1,0 +1,864 @@
+#!/usr/bin/env bash
+# Universal Ralph Wiggum - AI agent team orchestrator
+# Works with Claude Code, Cursor, Copilot, and any CLI-based AI tool.
+
+set -euo pipefail
+
+RALPH_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+source "${RALPH_ROOT}/lib/utils.sh"
+
+print_banner() {
+  cat << 'BANNER'
+  ╔══════════════════════════════════════════════╗
+  ║  Ralph Wiggum - Universal AI Agent Teams     ║
+  ║  "I'm helping!"                              ║
+  ╚══════════════════════════════════════════════╝
+BANNER
+}
+
+usage() {
+  cat << EOF
+Usage: ralph <command> [options]
+
+Commands:
+  init        Set up Ralph (interactive wizard, creates ralph.config.json)
+  start       Start a Ralph agent team on a task
+  scan        Find git repos on your system, pick one, and start Ralph
+  status      Show current team and task status
+  cancel      Cancel all running agents and clean up
+  plan        Run planning mode only (generate fix_plan.md)
+  settings    Open ralph.config.json in your editor
+
+Options:
+  -c, --config <file>    Config file (default: ralph.config.json)
+  -r, --repo <path>      Target repository path (overrides config)
+  -t, --tool <name>      AI tool: claude-code, cursor, copilot, aider, generic
+  -p, --prompt <text|file> Prompt: inline text OR path to a .md file
+  -n, --implementers <n> Number of implementer agents (default: 3)
+  -R, --reviewers <n>    Number of reviewer agents (default: 2)
+  -m, --max-iterations   Max loop iterations per agent (default: 50)
+  --completion-promise    Phrase that signals task completion
+  --claude-teams          Use Claude Code Agent Teams (native mode)
+  -h, --help              Show this help
+
+The -p flag accepts either a file path or inline text. If the value
+is an existing file, it's used as-is. Otherwise it's treated as the
+prompt text directly. If -p is omitted, Ralph asks you to type one.
+
+Examples:
+  # First time: interactive setup wizard
+  ralph init
+
+  # Start with an inline prompt
+  ralph start -p "Build a REST API for todos with tests"
+
+  # Let Ralph ask you for the prompt
+  ralph start
+
+  # Scan filesystem for repos, pick one interactively
+  ralph scan
+
+  # Edit your config
+  ralph settings
+
+  # Check status / cancel
+  ralph status
+  ralph cancel
+EOF
+}
+
+# Parse global arguments and dispatch to subcommands
+main() {
+  if [[ $# -eq 0 ]]; then
+    print_banner
+    usage
+    exit 0
+  fi
+
+  local command="$1"
+  shift
+
+  local config_file="${RALPH_ROOT}/ralph.config.json"
+  local config_overrides=()
+
+  # Parse global flags that appear before subcommand args
+  local args=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -c|--config)
+        config_file="$2"; shift 2 ;;
+      -r|--repo)
+        config_overrides+=("target_repo=$2"); shift 2 ;;
+      -t|--tool)
+        config_overrides+=("ai_tool=$2"); shift 2 ;;
+      -p|--prompt)
+        config_overrides+=("prompt_input=$2"); shift 2 ;;
+      -n|--implementers)
+        config_overrides+=("team.implementers=$2"); shift 2 ;;
+      -R|--reviewers)
+        config_overrides+=("team.reviewers=$2"); shift 2 ;;
+      -m|--max-iterations)
+        config_overrides+=("loop.max_iterations=$2"); shift 2 ;;
+      --completion-promise)
+        config_overrides+=("loop.completion_promise=$2"); shift 2 ;;
+      --claude-teams)
+        config_overrides+=("claude_teams.enabled=true"); shift ;;
+      -h|--help)
+        usage; exit 0 ;;
+      *)
+        args+=("$1"); shift ;;
+    esac
+  done
+
+  # init and settings don't require an existing config
+  case "$command" in
+    init)
+      cmd_init "${args[@]:-}"
+      return ;;
+    settings|config)
+      cmd_settings "$config_file"
+      return ;;
+    help|--help|-h)
+      usage
+      return ;;
+  esac
+
+  # All other commands need a config — prompt to run init if missing
+  if [[ ! -f "$config_file" ]]; then
+    ralph_log ERROR "No ralph.config.json found."
+    ralph_log INFO "Run 'ralph init' first to set up your configuration."
+    exit 1
+  fi
+
+  # Apply config overrides to a temp config
+  local effective_config="$config_file"
+  if [[ ${#config_overrides[@]} -gt 0 ]]; then
+    effective_config="${RALPH_ROOT}/state/.ralph-config-effective.json"
+    mkdir -p "$(dirname "$effective_config")"
+    cp "$config_file" "$effective_config"
+    
+    for override in "${config_overrides[@]}"; do
+      local key="${override%%=*}"
+      local value="${override#*=}"
+      local jq_path=".${key}"
+      if [[ "$value" == "true" ]] || [[ "$value" == "false" ]] || [[ "$value" =~ ^[0-9]+$ ]]; then
+        jq "${jq_path} = ${value}" "$effective_config" > "${effective_config}.tmp"
+      else
+        jq --arg v "$value" "${jq_path} = \$v" "$effective_config" > "${effective_config}.tmp"
+      fi
+      mv "${effective_config}.tmp" "$effective_config"
+    done
+  fi
+
+  case "$command" in
+    start)
+      cmd_start "$effective_config" "${args[@]:-}"
+      ;;
+    scan)
+      cmd_scan "$effective_config" "${args[@]:-}"
+      ;;
+    status)
+      cmd_status "$effective_config"
+      ;;
+    cancel)
+      cmd_cancel "$effective_config"
+      ;;
+    plan)
+      cmd_plan "$effective_config" "${args[@]:-}"
+      ;;
+    *)
+      ralph_log ERROR "Unknown command: $command"
+      usage
+      exit 1
+      ;;
+  esac
+}
+
+cmd_scan() {
+  local config="$1"; shift
+  local scan_root="${1:-}"
+
+  print_banner
+  require_jq
+
+  # Default scan roots: common development directories
+  local -a search_dirs=()
+  if [[ -n "$scan_root" ]]; then
+    if [[ ! -d "$scan_root" ]]; then
+      ralph_die "Directory not found: $scan_root"
+    fi
+    search_dirs+=("$scan_root")
+  else
+    for candidate in "$HOME/projects" "$HOME/repos" "$HOME/src" "$HOME/dev" \
+                     "$HOME/code" "$HOME/workspace" "$HOME/github" \
+                     "$HOME/Documents/projects" "$HOME/Documents/code" \
+                     "$HOME/Developer" "$HOME"; do
+      [[ -d "$candidate" ]] && search_dirs+=("$candidate")
+    done
+    if [[ ${#search_dirs[@]} -eq 0 ]]; then
+      search_dirs+=("$HOME")
+    fi
+  fi
+
+  ralph_log INFO "Scanning for git repositories..."
+  ralph_log INFO "Search paths: ${search_dirs[*]}"
+  echo ""
+
+  # Find git repos (max depth 4 to keep it fast, skip hidden dirs and node_modules)
+  local -a repos=()
+  local repo_count=0
+
+  for search_dir in "${search_dirs[@]}"; do
+    while IFS= read -r git_dir; do
+      local repo_path
+      repo_path=$(dirname "$git_dir")
+
+      # Skip the ralph plugin itself
+      [[ "$repo_path" == "$RALPH_ROOT" ]] && continue
+
+      # Skip bare repos
+      [[ -f "${repo_path}/HEAD" ]] && [[ ! -d "${repo_path}/.git" ]] && continue
+
+      repos+=("$repo_path")
+      repo_count=$((repo_count + 1))
+    done < <(find "$search_dir" -maxdepth 4 -name ".git" -type d \
+              ! -path "*/node_modules/*" \
+              ! -path "*/.cache/*" \
+              ! -path "*/Library/*" \
+              ! -path "*/.Trash/*" \
+              ! -path "*/.local/*" \
+              2>/dev/null | sort)
+  done
+
+  # Deduplicate (in case search dirs overlap)
+  local -a unique_repos=()
+  local -A seen=()
+  for r in "${repos[@]}"; do
+    local abs_r
+    abs_r=$(cd "$r" 2>/dev/null && pwd) || continue
+    if [[ -z "${seen[$abs_r]:-}" ]]; then
+      seen[$abs_r]=1
+      unique_repos+=("$abs_r")
+    fi
+  done
+  repos=("${unique_repos[@]}")
+  repo_count=${#repos[@]}
+
+  if [[ $repo_count -eq 0 ]]; then
+    ralph_log WARN "No git repositories found."
+    ralph_log INFO "Try: ralph scan /path/to/your/projects"
+    return 1
+  fi
+
+  # Display repos with details
+  echo "Found $repo_count git repositories:"
+  echo ""
+
+  local idx=1
+  for repo_path in "${repos[@]}"; do
+    local branch="" last_commit="" lang_hint=""
+
+    branch=$(git -C "$repo_path" branch --show-current 2>/dev/null || echo "???")
+    last_commit=$(git -C "$repo_path" log -1 --format='%cr' 2>/dev/null || echo "unknown")
+
+    # Detect primary language from common files
+    if [[ -f "${repo_path}/package.json" ]]; then
+      lang_hint="JS/TS"
+    elif [[ -f "${repo_path}/Cargo.toml" ]]; then
+      lang_hint="Rust"
+    elif [[ -f "${repo_path}/go.mod" ]]; then
+      lang_hint="Go"
+    elif [[ -f "${repo_path}/requirements.txt" ]] || [[ -f "${repo_path}/pyproject.toml" ]]; then
+      lang_hint="Python"
+    elif [[ -f "${repo_path}/Gemfile" ]]; then
+      lang_hint="Ruby"
+    elif [[ -f "${repo_path}/pom.xml" ]] || [[ -f "${repo_path}/build.gradle" ]]; then
+      lang_hint="Java"
+    elif [[ -f "${repo_path}/mix.exs" ]]; then
+      lang_hint="Elixir"
+    else
+      lang_hint=""
+    fi
+
+    local display_path="${repo_path/#$HOME/~}"
+    printf "  %3d) %-50s [%s] %s  (%s)\n" \
+      "$idx" "$display_path" "$branch" "${lang_hint:+[$lang_hint]}" "$last_commit"
+    idx=$((idx + 1))
+  done
+
+  echo ""
+
+  # Interactive selection
+  local selection
+  while true; do
+    printf "Select a repository [1-%d] (or 'q' to quit): " "$repo_count"
+    read -r selection
+
+    if [[ "$selection" == "q" ]] || [[ "$selection" == "Q" ]]; then
+      echo "Cancelled."
+      return 0
+    fi
+
+    if [[ "$selection" =~ ^[0-9]+$ ]] && [[ $selection -ge 1 ]] && [[ $selection -le $repo_count ]]; then
+      break
+    fi
+
+    echo "  Invalid selection. Enter a number between 1 and $repo_count."
+  done
+
+  local chosen_repo="${repos[$((selection - 1))]}"
+  echo ""
+  ralph_log INFO "Selected: $chosen_repo"
+  echo ""
+
+  echo ""
+  echo "What would you like to do?"
+  echo ""
+  echo "  1) Initialize this repo for Ralph (ralph init)"
+  echo "  2) Start Ralph on this repo (ralph start)"
+  echo "  3) Both: init then start"
+  echo "  4) Just set it as the target repo and exit"
+  echo ""
+  printf "Choice [1-4]: "
+  read -r action
+
+  # For options that need a prompt, resolve it now (inline text, file, or interactive)
+  local prompt_file=""
+  if [[ "$action" == "2" ]] || [[ "$action" == "3" ]]; then
+    prompt_file=$(resolve_prompt "" "$config") || true
+
+    # Also check for prompt files in the selected repo
+    if [[ -z "$prompt_file" ]]; then
+      local found_prompt=""
+      for candidate in "PROMPT.md" "prompt.md" "TASK.md" "task.md" "TODO.md"; do
+        if [[ -f "${chosen_repo}/${candidate}" ]]; then
+          found_prompt="${chosen_repo}/${candidate}"
+          break
+        fi
+      done
+      if [[ -n "$found_prompt" ]]; then
+        printf "Found prompt file: %s\n" "$found_prompt"
+        printf "Use this? [Y/n]: "
+        read -r yn
+        if [[ "$yn" != "n" ]] && [[ "$yn" != "N" ]]; then
+          prompt_file="$found_prompt"
+        fi
+      fi
+    fi
+  fi
+
+  local ai_tool
+  ai_tool=$(config_get "$config" '.ai_tool' 'generic')
+
+  case "$action" in
+    1)
+      ralph_log INFO "Setting up $chosen_repo..."
+      setup_repo_files "$chosen_repo" "$ai_tool"
+      ralph_log INFO "Done."
+      ;;
+    2)
+      if [[ -z "$prompt_file" ]]; then
+        ralph_die "No prompt provided. Use -p \"your prompt\" or -p file.md"
+      fi
+      local scan_config="${RALPH_ROOT}/state/.ralph-config-scan.json"
+      mkdir -p "$(dirname "$scan_config")"
+      jq --arg repo "$chosen_repo" --arg pf "$prompt_file" \
+        '.target_repo = $repo | .prompt_file = $pf' "$config" > "$scan_config"
+      cmd_start "$scan_config" "$prompt_file"
+      ;;
+    3)
+      ralph_log INFO "Setting up $chosen_repo..."
+      setup_repo_files "$chosen_repo" "$ai_tool"
+      echo ""
+      if [[ -z "$prompt_file" ]]; then
+        ralph_log INFO "Repo initialized. Run:"
+        ralph_log INFO "  ralph start -p \"your prompt here\" -r $chosen_repo"
+        return 0
+      fi
+      local scan_config="${RALPH_ROOT}/state/.ralph-config-scan.json"
+      mkdir -p "$(dirname "$scan_config")"
+      jq --arg repo "$chosen_repo" --arg pf "$prompt_file" \
+        '.target_repo = $repo | .prompt_file = $pf' "$config" > "$scan_config"
+      cmd_start "$scan_config" "$prompt_file"
+      ;;
+    4)
+      local scan_config="${RALPH_ROOT}/state/.ralph-config-scan.json"
+      mkdir -p "$(dirname "$scan_config")"
+      jq --arg repo "$chosen_repo" '.target_repo = $repo' "$config" > "$scan_config"
+      ralph_log INFO "Target repo set to: $chosen_repo"
+      ralph_log INFO "Config saved to: $scan_config"
+      ralph_log INFO "Next: ralph start -p \"your prompt\" -c $scan_config"
+      ;;
+    *)
+      echo "Invalid choice."
+      return 1
+      ;;
+  esac
+}
+
+# Resolve prompt input into a file path.
+# Accepts: existing file, inline text, or prompts interactively.
+# Returns the path via stdout.
+resolve_prompt() {
+  local input="$1"
+  local config="$2"
+
+  # 1. Try -p value
+  if [[ -n "$input" ]]; then
+    # If it's an existing file, use it directly
+    if [[ -f "$input" ]]; then
+      echo "$input"
+      return 0
+    fi
+    # Otherwise treat it as inline text
+    local tmpfile="${RALPH_ROOT}/state/.ralph-prompt-$(date +%s).md"
+    mkdir -p "${RALPH_ROOT}/state"
+    printf '%s\n' "$input" > "$tmpfile"
+    echo "$tmpfile"
+    return 0
+  fi
+
+  # 2. Try config file fields: prompt_input, prompt_file, prompt_text
+  if [[ -n "$config" ]] && [[ -f "$config" ]]; then
+    local cfg_input cfg_file cfg_text
+    # prompt_input is set by the -p flag override
+    cfg_input=$(config_get "$config" '.prompt_input' '')
+    if [[ -n "$cfg_input" ]]; then
+      if [[ -f "$cfg_input" ]]; then
+        echo "$cfg_input"
+        return 0
+      fi
+      local tmpfile="${RALPH_ROOT}/state/.ralph-prompt-$(date +%s).md"
+      mkdir -p "${RALPH_ROOT}/state"
+      printf '%s\n' "$cfg_input" > "$tmpfile"
+      echo "$tmpfile"
+      return 0
+    fi
+    cfg_file=$(config_get "$config" '.prompt_file' '')
+    if [[ -n "$cfg_file" ]] && [[ -f "$cfg_file" ]]; then
+      echo "$cfg_file"
+      return 0
+    fi
+    cfg_text=$(config_get "$config" '.prompt_text' '')
+    if [[ -n "$cfg_text" ]]; then
+      local tmpfile="${RALPH_ROOT}/state/.ralph-prompt-$(date +%s).md"
+      mkdir -p "${RALPH_ROOT}/state"
+      printf '%s\n' "$cfg_text" > "$tmpfile"
+      echo "$tmpfile"
+      return 0
+    fi
+  fi
+
+  # 3. Interactive: ask the user
+  if [[ -t 0 ]]; then
+    echo "" >&2
+    echo "No prompt provided. What should Ralph work on?" >&2
+    echo "(Type your prompt, then press Enter. For multiline, end with Ctrl-D)" >&2
+    echo "" >&2
+    printf "> " >&2
+    local user_text
+    user_text=$(cat)
+    if [[ -z "$user_text" ]]; then
+      return 1
+    fi
+    local tmpfile="${RALPH_ROOT}/state/.ralph-prompt-$(date +%s).md"
+    mkdir -p "${RALPH_ROOT}/state"
+    printf '%s\n' "$user_text" > "$tmpfile"
+    echo "$tmpfile"
+    return 0
+  fi
+
+  return 1
+}
+
+cmd_start() {
+  local config="$1"; shift
+  local prompt_input="${1:-}"
+
+  print_banner
+  require_jq
+
+  local prompt_file
+  prompt_file=$(resolve_prompt "$prompt_input" "$config") || \
+    ralph_die "Prompt required. Use -p \"your prompt\" or -p file.md"
+
+  local target_repo ai_tool claude_teams_enabled
+  target_repo=$(config_get "$config" '.target_repo' '.')
+  ai_tool=$(config_get "$config" '.ai_tool' 'claude-code')
+  claude_teams_enabled=$(config_get "$config" '.claude_teams.enabled' 'false')
+
+  # Resolve target repo to absolute path
+  if [[ "$target_repo" != /* ]]; then
+    target_repo="$(cd "$target_repo" 2>/dev/null && pwd)" || ralph_die "Target repo not found: $target_repo"
+  fi
+
+  ralph_log INFO "Starting Ralph Wiggum agent team"
+  ralph_log INFO "  Target repo: $target_repo"
+  ralph_log INFO "  AI tool: $ai_tool"
+  ralph_log INFO "  Prompt: $prompt_file"
+  ralph_log INFO "  Claude Teams: $claude_teams_enabled"
+
+  # Clean previous state
+  rm -rf "${RALPH_ROOT}/state/tasks"/*.json 2>/dev/null || true
+  rm -rf "${RALPH_ROOT}/state/agents"/*.json 2>/dev/null || true
+  rm -rf "${RALPH_ROOT}/state/messages"/*.json 2>/dev/null || true
+  mkdir -p "${RALPH_ROOT}/state"/{tasks,agents,messages,logs}
+
+  if [[ "$claude_teams_enabled" == "true" ]]; then
+    ralph_log INFO "Delegating to Claude Code Agent Teams (native mode)..."
+    exec "${RALPH_ROOT}/adapters/claude-code/ralph-claude-teams.sh" "$config" "$prompt_file"
+  else
+    exec "${RALPH_ROOT}/bin/ralph-manager.sh" "$config" "$prompt_file"
+  fi
+}
+
+# Set up repo files (AGENT.md, fix_plan.md, specs/, adapter).
+# Called by both cmd_init wizard and cmd_scan.
+setup_repo_files() {
+  local target_dir="$1"
+  local ai_tool="${2:-generic}"
+
+  if [[ -f "${RALPH_ROOT}/templates/AGENT.md.template" ]]; then
+    if [[ ! -f "${target_dir}/AGENT.md" ]]; then
+      cp "${RALPH_ROOT}/templates/AGENT.md.template" "${target_dir}/AGENT.md"
+      ralph_log INFO "  Created AGENT.md"
+    fi
+  fi
+
+  mkdir -p "${target_dir}/specs"
+
+  if [[ ! -f "${target_dir}/fix_plan.md" ]]; then
+    printf '# Fix Plan\n\nThis file is maintained by Ralph. Items are sorted by priority.\n' > "${target_dir}/fix_plan.md"
+    ralph_log INFO "  Created fix_plan.md"
+  fi
+
+  case "$ai_tool" in
+    claude-code)
+      mkdir -p "${target_dir}/.claude"
+      if [[ -d "${RALPH_ROOT}/adapters/claude-code/.claude-plugin" ]]; then
+        cp -r "${RALPH_ROOT}/adapters/claude-code/.claude-plugin" "${target_dir}/.claude-plugin" 2>/dev/null || true
+      fi
+      ralph_log INFO "  Installed Claude Code adapter"
+      ;;
+    cursor)
+      mkdir -p "${target_dir}/.cursor/rules"
+      if [[ -f "${RALPH_ROOT}/adapters/cursor/.cursor/rules/ralph-loop.mdc" ]]; then
+        cp "${RALPH_ROOT}/adapters/cursor/.cursor/rules/ralph-loop.mdc" "${target_dir}/.cursor/rules/"
+      fi
+      ralph_log INFO "  Installed Cursor adapter"
+      ;;
+    copilot)
+      mkdir -p "${target_dir}/.github"
+      if [[ -f "${RALPH_ROOT}/adapters/copilot/.github/copilot-instructions.md" ]]; then
+        cp "${RALPH_ROOT}/adapters/copilot/.github/copilot-instructions.md" "${target_dir}/.github/"
+      fi
+      ralph_log INFO "  Installed Copilot adapter"
+      ;;
+  esac
+
+  if [[ -f "${target_dir}/.gitignore" ]]; then
+    if ! grep -q "ralph-state/" "${target_dir}/.gitignore" 2>/dev/null; then
+      echo "ralph-state/" >> "${target_dir}/.gitignore"
+    fi
+  fi
+}
+
+cmd_init() {
+  local target_dir="${1:-}"
+
+  print_banner
+  require_jq
+
+  local config_file="${RALPH_ROOT}/ralph.config.json"
+
+  # If config already exists, ask whether to reconfigure or just set up a repo
+  if [[ -f "$config_file" ]]; then
+    echo ""
+    echo "  ralph.config.json already exists."
+    echo ""
+    echo "  1) Reconfigure from scratch"
+    echo "  2) Just set up a target repo with the current config"
+    echo "  3) Cancel"
+    echo ""
+    printf "  Choice [2]: "
+    read -r reinit_choice
+    case "${reinit_choice:-2}" in
+      1) ;; # fall through to wizard
+      2)
+        if [[ -z "$target_dir" ]]; then
+          target_dir=$(config_get "$config_file" '.target_repo' '.')
+          printf "  Target repository path [%s]: " "$target_dir"
+          read -r override_dir
+          target_dir="${override_dir:-$target_dir}"
+        fi
+        target_dir="${target_dir/#\~/$HOME}"
+        [[ "$target_dir" != /* ]] && target_dir="$(cd "$target_dir" 2>/dev/null && pwd)"
+        [[ ! -d "$target_dir" ]] && ralph_die "Directory not found: $target_dir"
+        local existing_tool
+        existing_tool=$(config_get "$config_file" '.ai_tool' 'generic')
+        ralph_log INFO "Setting up $target_dir..."
+        setup_repo_files "$target_dir" "$existing_tool"
+        ralph_log INFO "Done."
+        return 0
+        ;;
+      *) return 0 ;;
+    esac
+  fi
+
+  echo ""
+  echo "  Welcome to Ralph Wiggum setup."
+  echo "  This will create your ralph.config.json and prepare a target repo."
+  echo ""
+
+  # --- Step 1: Target repository ---
+  if [[ -z "$target_dir" ]]; then
+    printf "  Target repository path [.]: "
+    read -r target_dir
+    target_dir="${target_dir:-.}"
+  fi
+
+  target_dir="${target_dir/#\~/$HOME}"
+  if [[ "$target_dir" != /* ]]; then
+    target_dir="$(cd "$target_dir" 2>/dev/null && pwd)" || ralph_die "Directory not found: $target_dir"
+  fi
+  [[ ! -d "$target_dir" ]] && ralph_die "Directory not found: $target_dir"
+
+  echo ""
+
+  # --- Step 2: AI tool ---
+  echo "  Which AI tool will you use?"
+  echo ""
+  echo "    1) claude-code   (best supported, native Agent Teams)"
+  echo "    2) cursor         (rules-based, CLI adapter)"
+  echo "    3) copilot        (GitHub Copilot CLI)"
+  echo "    4) aider          (open source, CLI)"
+  echo "    5) generic        (any CLI tool)"
+  echo ""
+  printf "  Choice [1]: "
+  read -r tool_choice
+  local ai_tool
+  case "${tool_choice:-1}" in
+    1) ai_tool="claude-code" ;;
+    2) ai_tool="cursor" ;;
+    3) ai_tool="copilot" ;;
+    4) ai_tool="aider" ;;
+    5) ai_tool="generic" ;;
+    *) ai_tool="claude-code" ;;
+  esac
+
+  local ai_tool_command
+  case "$ai_tool" in
+    claude-code) ai_tool_command="claude --dangerously-skip-permissions -p" ;;
+    cursor)      ai_tool_command="cursor --cli --prompt" ;;
+    copilot)     ai_tool_command="gh copilot suggest" ;;
+    aider)       ai_tool_command="aider --message" ;;
+    generic)     ai_tool_command="" ;;
+  esac
+
+  echo ""
+
+  # --- Step 3: Team size ---
+  printf "  Number of implementer agents [3]: "
+  read -r n_impl
+  n_impl="${n_impl:-3}"
+
+  printf "  Number of reviewer agents [2]: "
+  read -r n_rev
+  n_rev="${n_rev:-2}"
+
+  echo ""
+
+  # --- Step 4: Loop settings ---
+  printf "  Max iterations per agent [50]: "
+  read -r max_iter
+  max_iter="${max_iter:-50}"
+
+  echo ""
+
+  # --- Step 5: Claude Teams ---
+  local claude_teams="false"
+  if [[ "$ai_tool" == "claude-code" ]]; then
+    printf "  Enable Claude Code Agent Teams (native mode)? [y/N]: "
+    read -r ct
+    if [[ "$ct" == "y" ]] || [[ "$ct" == "Y" ]]; then
+      claude_teams="true"
+    fi
+    echo ""
+  fi
+
+  # --- Step 6: Custom AI command ---
+  if [[ "$ai_tool" == "generic" ]] || [[ -z "$ai_tool_command" ]]; then
+    echo "  Enter the command to invoke your AI tool."
+    echo "  Ralph will pipe the prompt into this command via stdin."
+    echo ""
+    printf "  AI command: "
+    read -r ai_tool_command
+    [[ -z "$ai_tool_command" ]] && ralph_die "AI command is required for generic tools."
+    echo ""
+  fi
+
+  # --- Generate config ---
+  ralph_log INFO "Writing ralph.config.json..."
+
+  cat > "$config_file" << CONFIGEOF
+{
+  "version": "1.0.0",
+  "target_repo": $(printf '%s' "$target_dir" | jq -Rs .),
+  "prompt_text": "",
+  "ai_tool": $(printf '%s' "$ai_tool" | jq -Rs .),
+  "ai_tool_command": $(printf '%s' "$ai_tool_command" | jq -Rs .),
+  "model": "sonnet",
+  "team": {
+    "implementers": ${n_impl},
+    "reviewers": ${n_rev},
+    "max_retries_per_task": 3
+  },
+  "loop": {
+    "max_iterations": ${max_iter},
+    "completion_promise": "ALL_TASKS_COMPLETE",
+    "commit_on_success": true,
+    "pause_between_iterations_sec": 2
+  },
+  "claude_teams": {
+    "enabled": ${claude_teams},
+    "teammate_mode": "in-process"
+  },
+  "review": {
+    "check_tests": true,
+    "check_placeholders": true,
+    "check_spec_compliance": true,
+    "auto_approve_on_pass": false
+  }
+}
+CONFIGEOF
+
+  ralph_log INFO "Config saved to: $config_file"
+
+  # --- Set up target repo ---
+  ralph_log INFO "Setting up $target_dir..."
+  setup_repo_files "$target_dir" "$ai_tool"
+  mkdir -p "${RALPH_ROOT}/state"
+
+  echo ""
+  ralph_log INFO "Done! Ralph is ready."
+  echo ""
+  echo "  Next steps:"
+  echo "    ralph start -p \"Describe what you want built\""
+  echo "    ralph settings          # to tweak config"
+  echo "    ralph start -p task.md  # to use a file instead"
+  echo ""
+}
+
+cmd_status() {
+  local config="$1"
+  require_jq
+
+  source "${RALPH_ROOT}/lib/task-manager.sh"
+  source "${RALPH_ROOT}/lib/agent-registry.sh"
+
+  init_task_dir "$RALPH_ROOT"
+  init_agent_dir "$RALPH_ROOT"
+
+  echo "=== Ralph Wiggum Status ==="
+  echo ""
+
+  echo "--- Tasks ---"
+  task_summary | jq '.'
+  echo ""
+
+  echo "--- Agents ---"
+  agent_cleanup
+  local running
+  running=$(agent_list_running | jq 'length')
+  echo "Running agents: $running"
+  agent_list_running | jq -r '.[] | "  [\(.role)] \(.id) - task: \(.current_task // "none")"'
+  echo ""
+
+  echo "--- Task Details ---"
+  task_list "all" | jq -r '.[] | "  [\(.status)] \(.id): \(.title) (attempt \(.attempt_count)/\(.max_retries))"'
+}
+
+cmd_cancel() {
+  local config="$1"
+
+  source "${RALPH_ROOT}/lib/agent-registry.sh"
+  init_agent_dir "$RALPH_ROOT"
+
+  ralph_log INFO "Cancelling all Ralph agents..."
+  agent_kill_all
+  
+  # Clean up state
+  rm -f "${RALPH_ROOT}/state/tasks"/*.lock 2>/dev/null || true
+  rm -f "${RALPH_ROOT}/state/messages"/*.json 2>/dev/null || true
+
+  ralph_log INFO "All agents cancelled. Task state preserved for inspection."
+  ralph_log INFO "Run 'ralph status' to see final task states."
+}
+
+cmd_settings() {
+  local config_file="$1"
+
+  if [[ ! -f "$config_file" ]]; then
+    ralph_log WARN "No config found. Run 'ralph init' first, or creating from example..."
+    if [[ -f "${RALPH_ROOT}/ralph.config.example.json" ]]; then
+      cp "${RALPH_ROOT}/ralph.config.example.json" "$config_file"
+    else
+      ralph_die "No config and no example file found. Run 'ralph init' to set up."
+    fi
+  fi
+
+  # Pick an editor: $EDITOR > $VISUAL > nano > vi
+  local editor="${EDITOR:-${VISUAL:-}}"
+  if [[ -z "$editor" ]]; then
+    if command -v nano >/dev/null 2>&1; then
+      editor="nano"
+    elif command -v vi >/dev/null 2>&1; then
+      editor="vi"
+    else
+      ralph_die "No editor found. Set \$EDITOR or install nano."
+    fi
+  fi
+
+  ralph_log INFO "Opening $config_file with $editor"
+  "$editor" "$config_file"
+
+  # Validate JSON after editing
+  if command -v jq >/dev/null 2>&1; then
+    if jq empty "$config_file" 2>/dev/null; then
+      ralph_log INFO "Config saved. JSON is valid."
+    else
+      ralph_log WARN "Warning: $config_file is not valid JSON. You may want to fix it."
+      ralph_log WARN "Run 'ralph settings' again to edit."
+    fi
+  fi
+}
+
+cmd_plan() {
+  local config="$1"; shift
+  local prompt_input="${1:-}"
+
+  local prompt_file
+  prompt_file=$(resolve_prompt "$prompt_input" "$config") || \
+    ralph_die "Prompt required for planning. Use -p \"your prompt\" or -p file.md"
+
+  local target_repo
+  target_repo=$(config_get "$config" '.target_repo' '.')
+
+  ralph_log INFO "Running Ralph in planning mode..."
+  
+  source "${RALPH_ROOT}/lib/loop-engine.sh"
+
+  # Use planning prompt template
+  local plan_prompt="${RALPH_ROOT}/state/.ralph-plan-prompt.md"
+  local template="${RALPH_ROOT}/templates/prompt-plan.md"
+  
+  if [[ -f "$template" ]]; then
+    sed "s|{{PROMPT_FILE}}|${prompt_file}|g; s|{{TARGET_REPO}}|${target_repo}|g" "$template" > "$plan_prompt"
+  else
+    cp "$prompt_file" "$plan_prompt"
+  fi
+
+  ralph_loop "$config" "$plan_prompt" "plan-$(generate_id)"
+}
+
+main "$@"

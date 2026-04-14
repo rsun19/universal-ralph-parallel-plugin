@@ -1,0 +1,6 @@
+ralph.config.json
+state/
+*.lock
+.ralph-iter-*.log
+*.tmp
+*.tmp.*
