@@ -20,7 +20,7 @@ init_msg_dir "$RALPH_ROOT"
 REVIEWER_ID="review-${REVIEWER_NUM}-$(generate_id)"
 agent_register "$REVIEWER_ID" "reviewer" "$$"
 
-AI_COMMAND=$(config_get "$CONFIG_FILE" '.ai_tool_command' 'claude --dangerously-skip-permissions -p')
+AI_COMMAND=$(config_get "$CONFIG_FILE" '.ai_tool_command' 'claude -p')
 AI_TOOL=$(config_get "$CONFIG_FILE" '.ai_tool' 'claude-code')
 CHECK_TESTS=$(config_get "$CONFIG_FILE" '.review.check_tests' 'true')
 CHECK_PLACEHOLDERS=$(config_get "$CONFIG_FILE" '.review.check_placeholders' 'true')

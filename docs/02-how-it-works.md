@@ -5,7 +5,7 @@ This document explains the full lifecycle of a Ralph run, from the moment you ty
 ## The Big Picture
 
 ```
-You write a PROMPT.md
+You provide a prompt (inline, file, or interactive)
         |
         v
   [Manager Agent]
@@ -35,7 +35,7 @@ You write a PROMPT.md
 
 ## Phase 1: Planning
 
-When you run `ralph start -p PROMPT.md`, the manager agent starts first. It reads your prompt and sends it to the AI tool with instructions to break the work into a JSON array of tasks.
+When you run `ralph start -p "your prompt"` (or `-p spec.md` for a file), the manager agent starts first. It reads your prompt and sends it to the AI tool with instructions to break the work into a JSON array of tasks.
 
 The AI returns something like:
 
@@ -57,7 +57,7 @@ Each implementer does this in a loop:
 
 1. **Claim a task** - looks through `state/tasks/` for a `pending` task with no unresolved dependencies, atomically marks it `in_progress` (using file locking so two agents can't grab the same task)
 2. **Build a prompt** - takes the task title and description, wraps it in the implementation prompt template, and appends any previous review feedback if this is a retry
-3. **Run the AI** - pipes the prompt to whatever AI tool is configured (Claude Code, Cursor CLI, Aider, etc.)
+3. **Run the AI** - pipes the prompt to whatever AI tool is configured (Claude Code, Cursor, Copilot, etc.)
 4. **Check for completion** - looks for the text `TASK_DONE` in the AI's output
 5. **Report back** - marks the task as `completed` and optionally commits to git
 6. **Repeat** - goes back to step 1 to claim the next task

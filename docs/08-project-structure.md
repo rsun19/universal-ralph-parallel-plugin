@@ -3,7 +3,7 @@
 This document explains every file and directory in the plugin.
 
 ```
-ralph-wiggum-cursor-plugin/
+ralph-wiggum/
 │
 ├── bin/                          # Executable scripts
 │   ├── ralph                     # Main CLI (entry point for all commands)
@@ -39,15 +39,11 @@ ralph-wiggum-cursor-plugin/
 │   │   ├── ralph-claude-code-adapter.sh  # Adapter functions
 │   │   └── ralph-claude-teams.sh         # Native Agent Teams launcher
 │   │
-│   ├── cursor/                   # Cursor adapter
-│   │   ├── .cursor/rules/
-│   │   │   └── ralph-loop.mdc   # Cursor rule (always-on AI instructions)
-│   │   └── ralph-cursor-adapter.sh
+│   ├── cursor/                   # Cursor CLI adapter
+│   │   └── ralph-cursor-adapter.sh   # Returns: agent --model X -p
 │   │
-│   ├── copilot/                  # GitHub Copilot adapter
-│   │   ├── .github/
-│   │   │   └── copilot-instructions.md  # Workspace instructions
-│   │   └── ralph-copilot-adapter.sh
+│   ├── copilot/                  # GitHub Copilot CLI adapter
+│   │   └── ralph-copilot-adapter.sh  # Returns: copilot --model X -p
 │   │
 │   └── generic/                  # Generic adapter (any CLI tool)
 │       └── ralph-generic-adapter.sh
@@ -57,7 +53,7 @@ ralph-wiggum-cursor-plugin/
 │   ├── prompt-implement.md       # Implementation prompt (per task)
 │   ├── prompt-review.md          # Review prompt (per task)
 │   ├── prompt-manager.md         # Manager coordination prompt
-│   └── AGENT.md.template         # Copied to target repos on init
+│   └── AGENT.md.template         # Template for project learnings file
 │
 ├── state/                        # Runtime state (gitignored)
 │   ├── tasks/                    # Task JSON files
@@ -86,20 +82,13 @@ ralph-wiggum-cursor-plugin/
 6. It runs **Phase 3**: spawns `bin/ralph-review.sh` processes. Each reviewer claims completed tasks, builds prompts from `templates/prompt-review.md`, runs the AI, and approves or rejects
 7. The manager monitors `state/tasks/` for progress, respawns dead agents, and loops if rejected tasks need retrying
 
-### When you run `ralph init /path/to/project`:
+### When you run `ralph init`:
 
-1. `bin/ralph` copies `templates/AGENT.md.template` to the project as `AGENT.md`
-2. Creates `specs/` directory and `fix_plan.md`
-3. Loads the adapter for the specified tool and copies its files:
-   - Claude Code: `.claude-plugin/` directory
-   - Cursor: `.cursor/rules/ralph-loop.mdc`
-   - Copilot: `.github/copilot-instructions.md`
+1. An interactive wizard collects your preferences (repo path, AI tool, model, team size)
+2. Writes `ralph.config.json` (gitignored, never checked in)
 
 ### The adapter pattern
 
-Each adapter exports two functions:
+Each adapter exports a `get_adapter_command(config_file)` function that returns the shell command to invoke the AI tool. The manager and workers call this to know how to run the AI.
 
-- `get_adapter_command(config_file)` - returns the shell command to invoke the AI tool
-- `install_adapter(target_dir, ralph_root)` - copies adapter-specific files into a target project
-
-The manager and workers call `get_adapter_command` to know how to invoke the AI. The `ralph init` command calls `install_adapter` to set up a project.
+Adapters live in `adapters/` and include tool-specific configuration files (rules, hooks, agent definitions) that Ralph uses internally.

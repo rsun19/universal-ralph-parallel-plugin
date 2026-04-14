@@ -2,7 +2,7 @@
 
 > "I'm helping!" - Ralph Wiggum
 
-A universal implementation of the [Ralph Wiggum technique](https://ghuntley.com/ralph/) for iterative, self-referential AI development loops. Works with **Claude Code**, **Cursor**, **GitHub Copilot**, **Aider**, and any CLI-based AI tool.
+A universal implementation of the [Ralph Wiggum technique](https://ghuntley.com/ralph/) for iterative, self-referential AI development loops. Works with **Claude Code**, **Cursor**, **GitHub Copilot**, and any CLI-based AI tool.
 
 Extends the core Ralph loop with **agent team orchestration**: a manager coordinates parallel implementers and reviewers, with automatic retry logic and quality gates.
 
@@ -11,7 +11,7 @@ Extends the core Ralph loop with **agent team orchestration**: a manager coordin
 Ralph is a development methodology based on continuous AI agent loops. In its purest form:
 
 ```bash
-while :; do cat PROMPT.md | claude-code; done
+while :; do cat PROMPT.md | claude; done
 ```
 
 This plugin implements Ralph with:
@@ -25,10 +25,27 @@ This plugin implements Ralph with:
 
 ### 1. Install
 
+**From a clone:**
+
 ```bash
 git clone <this-repo> ralph-wiggum
 cd ralph-wiggum
 ./install.sh --link
+```
+
+**From a release tarball / binary archive:**
+
+```bash
+tar xzf ralph-wiggum-v1.0.0.tar.gz
+cd ralph-wiggum-v1.0.0
+./install.sh --prefix ~/.local    # installs to ~/.local/share/ralph-wiggum/
+```
+
+**Manual placement** (just set the env var):
+
+```bash
+export RALPH_ROOT="/path/to/ralph-wiggum"
+export PATH="${RALPH_ROOT}/bin:$PATH"
 ```
 
 ### 2. Initialize (first time only)
@@ -38,8 +55,9 @@ ralph init
 ```
 
 This launches an interactive setup wizard that walks you through:
-- Target repository path
+- Target repository path (type it, scan for it, or use current directory)
 - Which AI tool to use
+- Which model (sonnet, opus, gpt-4.1, etc.)
 - Team size (implementers + reviewers)
 - Loop settings
 
@@ -75,12 +93,11 @@ This will:
 
 ## Supported AI Tools
 
-| Tool | Adapter | How it works |
+| Tool | Adapter | CLI command |
 |------|---------|-------------|
-| **Claude Code** | `claude-code` | Native CLI, stop hooks, Agent Teams integration |
-| **Cursor** | `cursor` | Rules-based (.mdc), CLI adapter |
-| **GitHub Copilot** | `copilot` | Workspace instructions, gh copilot CLI |
-| **Aider** | `generic` | Generic CLI adapter (`aider --message`) |
+| **Claude Code** | `claude-code` | `claude --model sonnet -p` |
+| **Cursor** | `cursor` | `agent --model sonnet -p` |
+| **GitHub Copilot** | `copilot` | `copilot --allow-all --model sonnet -p` |
 | **Any CLI tool** | `generic` | Configurable command in `ralph.config.json` |
 
 ## Configuration
@@ -110,22 +127,16 @@ ralph settings
 | `claude_teams.enabled` | Use Claude Code Agent Teams natively | `false` |
 | `claude_teams.teammate_mode` | `in-process` or `tmux` | `in-process` |
 
-## Standalone Mode
+## Repo Scanner
 
-Ralph can run as standalone software -- not just as a plugin. Use `scan` to find repos on your system:
+Don't know the exact path to your repo? Use `scan` to find it:
 
 ```bash
-# Find all git repos under your home directory and pick one
-ralph scan
-
-# Scan a specific folder
-ralph scan ~/projects
-
-# Scan and start immediately with an inline prompt
-ralph scan ~/projects -p "Add authentication to the app"
+ralph scan              # scans common directories (~, ~/projects, ~/code, etc.)
+ralph scan ~/work       # scans a specific folder
 ```
 
-Ralph scans for git repositories (up to 4 levels deep), shows you a numbered list with branch, language, and last commit date, and lets you pick one interactively. From there you can initialize it, start an agent team on it, or both.
+Ralph finds git repositories (up to 4 levels deep), shows a numbered list with branch, language, and last commit date, and lets you pick one to start working on.
 
 ## CLI Reference
 
@@ -144,13 +155,14 @@ Commands:
 Options:
   -c, --config <file>     Config file (default: ralph.config.json)
   -r, --repo <path>       Target repository path
-  -t, --tool <name>       AI tool: claude-code, cursor, copilot, aider, generic
+  -t, --tool <name>       AI tool: claude-code, cursor, copilot, generic
   -p, --prompt <text|file> Inline prompt text OR path to a .md file
   -n, --implementers <n>  Number of implementer agents
   -R, --reviewers <n>     Number of reviewer agents
   -m, --max-iterations    Max loop iterations per agent
   --completion-promise     Phrase that signals task completion
   --claude-teams           Use Claude Code Agent Teams (native mode)
+  --allow-all              Skip all permission prompts in the AI tool
 ```
 
 Run `ralph init` first. The `-p` flag accepts either a file path or inline text. If you omit `-p`, Ralph will ask you interactively.
@@ -267,34 +279,106 @@ ralph start -p "Build the thing" -m 30
 
 ### Cursor
 
-```bash
-# Initialize with Cursor adapter
-ralph init /path/to/project --tool cursor
-
-# Run with Cursor CLI (if available)
-ralph start -p "Refactor the database layer" -t cursor -r /path/to/project
-
-# Or use the built-in runner script
-cd /path/to/project
-.cursor/ralph-run.sh "Refactor the database layer"
-```
-
-### Aider
+Ralph uses the Cursor CLI (`agent`) to drive agents non-interactively:
 
 ```bash
-ralph start -p "Add input validation" -t generic \
-  --config <(jq '.ai_tool_command = "aider --message"' ralph.config.json)
+# Install the Cursor CLI
+curl https://cursor.com/install -fsS | bash
+
+# Run the setup wizard (select cursor when asked)
+ralph init
+
+# Start
+ralph start -p "Build a REST API for todos"
 ```
+
+Ralph pipes prompts to `agent --model <model> -p`, giving you the full Ralph
+orchestration (parallel workers, reviewers, retry loops) powered by Cursor.
+
+### GitHub Copilot
+
+Ralph uses the Copilot CLI (`copilot`) to drive agents non-interactively:
+
+```bash
+# Install the Copilot CLI
+# See: https://docs.github.com/en/copilot/how-tos/set-up/install-copilot-cli
+
+# Run the setup wizard (select copilot when asked)
+ralph init
+
+# Start
+ralph start -p "Build a REST API for todos"
+```
+
+Ralph pipes prompts to `copilot --allow-all --model <model> -p`, giving you the full
+Ralph orchestration (parallel workers, reviewers, retry loops) powered by Copilot.
+
+> **Note:** Copilot CLI does not support config-file-based permissions. `--allow-all`
+> is always included in the Copilot adapter. See [Permissions](#permissions) below.
 
 ### Custom Tool
 
-Edit `ralph.config.json`:
+Set `ai_tool_command` in your config via `ralph settings`:
 ```json
 {
   "ai_tool": "generic",
   "ai_tool_command": "./my-custom-ai-wrapper.sh"
 }
 ```
+
+## Permissions
+
+Ralph runs AI agents in unattended loops, so they need permission to read files, write files, and run shell commands without prompting you each time. **By default, Ralph respects each tool's native permission config** — it does not skip permissions unless you tell it to.
+
+### Claude Code
+
+Configure permissions in `~/.claude/settings.json` (user-level) or `<project>/.claude/settings.json` (project-level):
+
+```json
+{
+  "permissions": {
+    "allow": ["Bash", "Read", "Edit", "WebFetch"]
+  }
+}
+```
+
+Docs: [code.claude.com/docs/en/permissions](https://code.claude.com/docs/en/permissions)
+
+### Cursor
+
+Configure permissions in `~/.cursor/cli-config.json` (global) or `<project>/.cursor/cli.json` (project-level):
+
+```json
+{
+  "permissions": {
+    "allow": ["Shell(*)", "Read(**)", "Write(**)", "Mcp(*:*)"]
+  }
+}
+```
+
+Docs: [cursor.com/docs/cli/reference/permissions](https://cursor.com/docs/cli/reference/permissions)
+
+### GitHub Copilot (no config-based permissions)
+
+Copilot CLI does **not** have a config-file-based permission system. The only way to skip permission prompts is the `--allow-all` CLI flag, which Ralph's Copilot adapter includes by default. Without it, every tool use prompts for approval, making unattended loops impossible.
+
+Docs: [docs.github.com/en/copilot/how-tos/copilot-cli/allowing-tools](https://docs.github.com/en/copilot/how-tos/copilot-cli/allowing-tools)
+
+### `--allow-all` flag
+
+To skip all permission prompts regardless of config, pass `--allow-all`:
+
+```bash
+ralph start --allow-all -p "Build a REST API"
+```
+
+This adds the appropriate flag for each tool:
+
+| Tool | Flag added |
+|------|-----------|
+| Claude Code | `--dangerously-skip-permissions` |
+| Cursor | `--force` |
+| Copilot | `--allow-all` (always included) |
 
 ## Philosophy
 
@@ -308,9 +392,9 @@ Ralph embodies several key principles from [Geoffrey Huntley's original techniqu
 
 ## Prerequisites
 
-- **bash** (4.0+)
+- **bash** (3.2+)
 - **jq** (for JSON processing)
-- An AI coding tool CLI (claude, cursor, gh copilot, aider, etc.)
+- An AI coding tool CLI (`claude`, `agent` for Cursor, `copilot` for GitHub Copilot, or any CLI tool)
 
 ## Documentation
 
@@ -321,7 +405,7 @@ Full docs are in the [`docs/`](docs/) directory:
 | [Getting Started](docs/01-getting-started.md) | Install, set up a project, run your first team |
 | [How It Works](docs/02-how-it-works.md) | The full lifecycle: planning, implementation, review, retry |
 | [Configuration](docs/03-configuration.md) | Every setting explained |
-| [Choosing an AI Tool](docs/04-ai-tools.md) | Setup for Claude Code, Cursor, Copilot, Aider, and more |
+| [Choosing an AI Tool](docs/04-ai-tools.md) | Setup for Claude Code, Cursor, Copilot, and more |
 | [Writing Prompts](docs/05-writing-prompts.md) | How to write prompts that get results |
 | [Claude Code Agent Teams](docs/06-claude-teams.md) | Native team mode |
 | [Troubleshooting](docs/07-troubleshooting.md) | Common issues and fixes |

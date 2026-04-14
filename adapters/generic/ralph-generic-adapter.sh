@@ -4,9 +4,8 @@
 # This adapter works with any tool that can accept a prompt via stdin or file.
 # Configure the exact command in ralph.config.json under "ai_tool_command".
 #
-# Supported tools (configure ai_tool_command accordingly):
+# Example ai_tool_command values:
 #
-#   Aider:          "aider --message"
 #   Continue:       "continue"
 #   Cline:          "cline --prompt"
 #   OpenAI CLI:     "openai api chat.completions.create -m gpt-4 -p"
@@ -20,7 +19,7 @@ get_adapter_command() {
   
   if [[ -z "$cmd" ]]; then
     ralph_log ERROR "Generic adapter requires 'ai_tool_command' in config"
-    ralph_log ERROR "Example: \"ai_tool_command\": \"aider --message\""
+    ralph_log ERROR "Example: \"ai_tool_command\": \"your-tool --prompt\""
     return 1
   fi
   
@@ -38,7 +37,7 @@ install_adapter() {
 # Usage: ./ralph-run.sh <prompt text or file> <ai-command> [max-iterations]
 #
 # Examples:
-#   ./ralph-run.sh "Add input validation" "aider --message" 50
+#   ./ralph-run.sh "Add input validation" "your-tool --prompt" 50
 #   ./ralph-run.sh PROMPT.md "claude -p" 100
 
 INPUT="${1:?Usage: ralph-run.sh <prompt text or file> <ai-command> [max-iterations]}"
