@@ -10,7 +10,7 @@ Settings live in `ralph.config.json`, which is created when you run `ralph init`
   "target_repo": ".",
   "prompt_text": "",
   "ai_tool": "claude-code",
-  "ai_tool_command": "claude --model sonnet -p",
+  "ai_tool_command": "claude -p",
   "model": "sonnet",
   "team": {
     "implementers": 3,
@@ -91,9 +91,9 @@ Each option loads a different adapter from the `adapters/` directory. See [Choos
 - Copilot: `"copilot --allow-all --model sonnet -p"`
 - Custom: `"./my-ai-wrapper.sh"`
 
-If an adapter is loaded (via `ai_tool`), the adapter may override this command. If you set `ai_tool` to `"generic"`, this command is used directly.
+When a built-in adapter exists (claude-code, cursor, copilot), the adapter's `get_adapter_command()` is the canonical source for the runtime command and **replaces** this value at startup. The `ai_tool_command` in config is only used directly when `ai_tool` is set to `"generic"` or when no adapter file is found.
 
-Permission-skipping flags (e.g. `--dangerously-skip-permissions` for Claude Code) are **not** included by default. Use `ralph start --allow-all` to add them at runtime, or configure permissions via the tool's config file. See [Choosing an AI Tool](04-ai-tools.md) for per-tool permission setup.
+Permission-skipping flags (e.g. `--dangerously-skip-permissions` for Claude Code) are **not** included by default — except for the Copilot adapter, which always includes `--allow-all` because Copilot CLI has no config-file-based permission system. Use `ralph start --allow-all` to add them at runtime for other tools, or configure permissions via the tool's config file. See [Choosing an AI Tool](04-ai-tools.md) for per-tool permission setup.
 
 ---
 

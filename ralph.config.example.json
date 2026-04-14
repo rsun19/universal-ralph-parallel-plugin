@@ -3,7 +3,7 @@
   "target_repo": ".",
   "prompt_text": "",
   "ai_tool": "claude-code",
-  "ai_tool_command": "claude --model sonnet -p",
+  "ai_tool_command": "claude -p",
   "model": "sonnet",
   "_model_options": ["sonnet", "opus", "haiku", "gpt-4.1", "gpt-4.1-mini", "o3", "gemini-2.5-pro"],
   "team": {

@@ -25,7 +25,7 @@ get_adapter_command() {
   fi
 
   if [[ -n "$model" ]] && [[ "$model" != "null" ]]; then
-    cmd="${cmd} --model ${model}"
+    cmd="${cmd} --model \"${model}\""
   fi
 
   echo "${cmd} -p"

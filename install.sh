@@ -53,15 +53,20 @@ check_dependencies() {
   echo "All dependencies satisfied."
 }
 
+set_executable() {
+  local base="$1"
+  chmod +x "${base}/bin/ralph"
+  chmod +x "${base}/bin/ralph-manager.sh"
+  chmod +x "${base}/bin/ralph-worker.sh"
+  chmod +x "${base}/bin/ralph-review.sh"
+  chmod +x "${base}/adapters/claude-code/hooks/"*.sh 2>/dev/null || true
+  chmod +x "${base}/adapters/claude-code/ralph-claude-teams.sh" 2>/dev/null || true
+  chmod +x "${base}/adapters/claude-code/scripts/"*.sh 2>/dev/null || true
+}
+
 make_executable() {
   echo "Making scripts executable..."
-  chmod +x "${SCRIPT_DIR}/bin/ralph"
-  chmod +x "${SCRIPT_DIR}/bin/ralph-manager.sh"
-  chmod +x "${SCRIPT_DIR}/bin/ralph-worker.sh"
-  chmod +x "${SCRIPT_DIR}/bin/ralph-review.sh"
-  chmod +x "${SCRIPT_DIR}/adapters/claude-code/hooks/"*.sh 2>/dev/null || true
-  chmod +x "${SCRIPT_DIR}/adapters/claude-code/ralph-claude-teams.sh" 2>/dev/null || true
-  chmod +x "${SCRIPT_DIR}/adapters/claude-code/scripts/"*.sh 2>/dev/null || true
+  set_executable "$SCRIPT_DIR"
   echo "Done."
 }
 
@@ -94,13 +99,7 @@ install_to_prefix() {
   cp "${SCRIPT_DIR}/ralph.config.example.json" "$dest/" 2>/dev/null || true
   cp "${SCRIPT_DIR}/README.md" "$dest/" 2>/dev/null || true
 
-  chmod +x "${dest}/bin/ralph"
-  chmod +x "${dest}/bin/ralph-manager.sh"
-  chmod +x "${dest}/bin/ralph-worker.sh"
-  chmod +x "${dest}/bin/ralph-review.sh"
-  chmod +x "${dest}/adapters/claude-code/hooks/"*.sh 2>/dev/null || true
-  chmod +x "${dest}/adapters/claude-code/ralph-claude-teams.sh" 2>/dev/null || true
-  chmod +x "${dest}/adapters/claude-code/scripts/"*.sh 2>/dev/null || true
+  set_executable "$dest"
 
   # Create a wrapper script (not a symlink) so RALPH_ROOT is baked in
   cat > "${prefix}/bin/ralph" << WRAPPER

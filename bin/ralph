@@ -350,11 +350,10 @@ cmd_scan() {
       cmd_start "$scan_config" "$prompt_file"
       ;;
     2)
-      local scan_config="${RALPH_ROOT}/state/.ralph-config-scan.json"
-      mkdir -p "$(dirname "$scan_config")"
-      jq --arg repo "$chosen_repo" '.target_repo = $repo' "$config" > "$scan_config"
+      jq --arg repo "$chosen_repo" '.target_repo = $repo' "$config" > "${config}.tmp"
+      mv "${config}.tmp" "$config"
       ralph_log INFO "Target repo set to: $chosen_repo"
-      ralph_log INFO "Next: ralph start -p \"your prompt\" -c $scan_config"
+      ralph_log INFO "Next: ralph start -p \"your prompt\""
       ;;
     *)
       echo "  Invalid choice."

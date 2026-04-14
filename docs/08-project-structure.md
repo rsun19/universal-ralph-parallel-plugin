@@ -43,7 +43,7 @@ ralph-wiggum/
 │   │   └── ralph-cursor-adapter.sh   # Returns: agent --model X -p
 │   │
 │   ├── copilot/                  # GitHub Copilot CLI adapter
-│   │   └── ralph-copilot-adapter.sh  # Returns: copilot --model X -p
+│   │   └── ralph-copilot-adapter.sh  # Returns: copilot --allow-all --model X -p
 │   │
 │   └── generic/                  # Generic adapter (any CLI tool)
 │       └── ralph-generic-adapter.sh
