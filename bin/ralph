@@ -69,7 +69,8 @@ Options:
 
 The -p flag accepts either a file path or inline text. If the value
 is an existing file, it's used as-is. Otherwise it's treated as the
-prompt text directly. If -p is omitted, Ralph asks you to type one.
+prompt text directly. If -p is omitted, Ralph opens your \$EDITOR
+so you can write a formatted prompt (markdown, lists, etc.).
 
 Examples:
   # First time: interactive setup wizard
@@ -415,8 +416,56 @@ resolve_prompt() {
     fi
   fi
 
-  # 3. Interactive: ask the user
+  # 3. Interactive: open $EDITOR for a rich editing experience
   if [[ -t 0 ]]; then
+    local tmpfile="${RALPH_ROOT}/state/.ralph-prompt-$(date +%s).md"
+    mkdir -p "${RALPH_ROOT}/state"
+
+    local editor="${EDITOR:-${VISUAL:-}}"
+    if [[ -z "$editor" ]]; then
+      for candidate in nano vim vi; do
+        if command -v "$candidate" >/dev/null 2>&1; then
+          editor="$candidate"; break
+        fi
+      done
+    fi
+
+    if [[ -n "$editor" ]]; then
+      cat > "$tmpfile" << 'PROMPT_TEMPLATE'
+# Ralph Wiggum — What should Ralph work on?
+#
+# Write your prompt below. Use full markdown: lists, headings, code blocks.
+# Lines starting with # are comments and will be stripped.
+#
+# Save and close the editor when done. Leave empty to cancel.
+
+PROMPT_TEMPLATE
+
+      echo "" >&2
+      ralph_log INFO "Opening editor ($editor) for your prompt..." >&2
+      "$editor" "$tmpfile" < /dev/tty > /dev/tty
+
+      # Strip comment lines and leading/trailing blank lines (BSD sed compatible)
+      local cleaned
+      cleaned=$(awk '
+        !/^#/ {
+          line[++n] = $0
+          if ($0 ~ /[^[:space:]]/) { last = n; if (!first) first = n }
+        }
+        END { for (i = first; i <= last; i++) print line[i] }
+      ' "$tmpfile")
+
+      if [[ -z "$cleaned" ]]; then
+        rm -f "$tmpfile"
+        return 1
+      fi
+
+      printf '%s\n' "$cleaned" > "$tmpfile"
+      echo "$tmpfile"
+      return 0
+    fi
+
+    # Fallback: no editor available, use simple stdin
     echo "" >&2
     echo "No prompt provided. What should Ralph work on?" >&2
     echo "(Type your prompt, then press Enter. For multiline, end with Ctrl-D)" >&2
@@ -427,8 +476,6 @@ resolve_prompt() {
     if [[ -z "$user_text" ]]; then
       return 1
     fi
-    local tmpfile="${RALPH_ROOT}/state/.ralph-prompt-$(date +%s).md"
-    mkdir -p "${RALPH_ROOT}/state"
     printf '%s\n' "$user_text" > "$tmpfile"
     echo "$tmpfile"
     return 0
@@ -472,6 +519,8 @@ cmd_start() {
 
   if [[ "$claude_teams_enabled" == "true" ]]; then
     ralph_log INFO "Delegating to Claude Code Agent Teams (native mode)..."
+    ralph_log WARN "Note: 'ralph status' does not track native Claude Teams."
+    ralph_log WARN "Claude Code manages the team internally. Use Claude's own UI to monitor progress."
     exec "${RALPH_ROOT}/adapters/claude-code/ralph-claude-teams.sh" "$config" "$prompt_file"
   else
     exec "${RALPH_ROOT}/bin/ralph-manager.sh" "$config" "$prompt_file"
@@ -774,6 +823,58 @@ CONFIGEOF
 cmd_status() {
   local config="$1"
   require_jq
+
+  local claude_teams_enabled
+  claude_teams_enabled=$(config_get "$config" '.claude_teams.enabled' 'false')
+
+  if [[ "$claude_teams_enabled" == "true" ]]; then
+    echo "=== Ralph Wiggum Status (Claude Teams Native Mode) ==="
+    echo ""
+    ralph_log WARN "Claude manages tasks and agents internally in native mode."
+    echo ""
+
+    local log_dir="${RALPH_ROOT}/state/logs/claude-teams"
+    local latest_log=""
+    if [[ -d "$log_dir" ]]; then
+      latest_log=$(ls -t "$log_dir"/session-*.log 2>/dev/null | head -1)
+    fi
+
+    if [[ -n "$latest_log" ]] && [[ -f "$latest_log" ]]; then
+      local log_size
+      log_size=$(wc -c < "$latest_log" | tr -d ' ')
+      local log_lines
+      log_lines=$(wc -l < "$latest_log" | tr -d ' ')
+      echo "--- Claude Teams Session Log ---"
+      echo "  File: $latest_log"
+      echo "  Size: ${log_size} bytes, ${log_lines} lines"
+      echo ""
+
+      # Check if still running (file modified in last 30 seconds)
+      local now_epoch mod_epoch
+      now_epoch=$(date +%s)
+      if [[ "$(uname)" == "Darwin" ]]; then
+        mod_epoch=$(stat -f %m "$latest_log")
+      else
+        mod_epoch=$(stat -c %Y "$latest_log")
+      fi
+      local age=$(( now_epoch - mod_epoch ))
+      if [[ $age -lt 30 ]]; then
+        echo "  Status: RUNNING (last output ${age}s ago)"
+      else
+        echo "  Status: IDLE (last output ${age}s ago)"
+      fi
+      echo ""
+
+      echo "--- Last 30 lines ---"
+      tail -30 "$latest_log"
+      echo ""
+      echo "  Full log: tail -f $latest_log"
+    else
+      echo "  No Claude Teams session log found."
+      echo "  Run 'ralph start' to begin a session."
+    fi
+    return
+  fi
 
   source "${RALPH_ROOT}/lib/task-manager.sh"
   source "${RALPH_ROOT}/lib/agent-registry.sh"

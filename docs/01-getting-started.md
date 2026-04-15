@@ -107,12 +107,12 @@ To edit your config later: `ralph settings`
 ralph start -p "Build a REST API for a bookstore with Express, TypeScript, SQLite, and Jest tests"
 ```
 
-Or omit `-p` and Ralph will ask you interactively:
+Or omit `-p` and Ralph opens your `$EDITOR` so you can write a formatted prompt with markdown, lists, and code blocks:
 
 ```bash
 ralph start
-# → "No prompt provided. What should Ralph work on?"
-# → Type your prompt and press Enter
+# → Opens your editor (nano, vim, etc.)
+# → Write your prompt, save and close
 ```
 
 You can also point `-p` at a file for longer specs:
