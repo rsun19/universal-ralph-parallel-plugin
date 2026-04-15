@@ -750,7 +750,7 @@ cmd_init() {
     if [[ "$ai_tool" == "claude-code" ]]; then
       echo "  Adds --dangerously-skip-permissions to claude."
     elif [[ "$ai_tool" == "cursor" ]]; then
-      echo "  Adds --force to agent."
+      echo "  Adds --force --approve-mcps to agent."
     fi
     echo "  You can also configure permissions via config files instead."
     echo ""

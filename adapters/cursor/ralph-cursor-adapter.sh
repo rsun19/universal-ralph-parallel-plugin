@@ -5,8 +5,8 @@
 #   ~/.cursor/cli-config.json (global)
 #   <project>/.cursor/cli.json (project)
 #
-# Pass --allow-all to ralph start to add --force (required for
-# file writes in print mode without pre-configured permissions).
+# Pass --allow-all to ralph start to add --force --approve-mcps
+# (required for unattended file writes and MCP tool access).
 #
 # Install: curl https://cursor.com/install -fsS | bash
 # Docs:    https://cursor.com/docs/cli/overview
@@ -21,7 +21,7 @@ _cursor_base_flags() {
   local cmd="agent"
 
   if [[ "$allow_all" == "true" ]]; then
-    cmd="${cmd} --force"
+    cmd="${cmd} --force --approve-mcps"
   fi
 
   if [[ -n "$model" ]] && [[ "$model" != "null" ]]; then
@@ -54,7 +54,7 @@ get_manager_command() {
   local cmd="agent"
 
   if [[ "$allow_all" == "true" ]]; then
-    cmd="${cmd} --force"
+    cmd="${cmd} --force --approve-mcps"
   fi
 
   if [[ -n "$mgr_model" ]] && [[ "$mgr_model" != "null" ]]; then
