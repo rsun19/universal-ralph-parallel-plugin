@@ -5,6 +5,9 @@
   "ai_tool": "claude-code",
   "ai_tool_command": "claude -p",
   "model": "sonnet",
+  "manager_model": "sonnet",
+  "allow_all": false,
+  "turns": 50,
   "_model_options": ["sonnet", "opus", "haiku", "gpt-4.1", "gpt-4.1-mini", "o3", "gemini-2.5-pro"],
   "team": {
     "implementers": 3,
@@ -12,13 +15,13 @@
     "max_retries_per_task": 3
   },
   "loop": {
-    "max_iterations": 50,
+    "max_iterations": 3,
     "completion_promise": "ALL_TASKS_COMPLETE",
     "commit_on_success": true,
     "pause_between_iterations_sec": 2
   },
+  "agent_teams": false,
   "claude_teams": {
-    "enabled": false,
     "teammate_mode": "in-process"
   },
   "review": {

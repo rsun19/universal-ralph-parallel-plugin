@@ -76,7 +76,7 @@ run_review() {
   title=$(echo "$task_json" | jq -r '.title')
   description=$(echo "$task_json" | jq -r '.description')
 
-  local review_prompt="${RALPH_ROOT}/state/reviewer-${REVIEWER_ID}-prompt.md"
+  local review_prompt="${RALPH_ROOT}/state/prompts/reviewer-${REVIEWER_ID}-prompt.md"
   local review_template="${RALPH_ROOT}/templates/prompt-review.md"
 
   if [[ -f "$review_template" ]]; then

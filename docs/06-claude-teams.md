@@ -1,23 +1,42 @@
-# Claude Code Agent Teams Integration
+# Agent Teams (Interactive Session Mode)
 
-This plugin has two modes for running agent teams with Claude Code:
+This plugin has two modes for running agent teams:
 
-1. **Shell mode** (default): Ralph spawns Claude Code processes itself, coordinating through files on disk
-2. **Native Agent Teams mode**: Ralph delegates to Claude Code's built-in Agent Teams feature, where Claude manages the team internally
+1. **Bash orchestration** (default): Ralph spawns separate CLI processes itself, coordinating through files on disk
+2. **Interactive session mode**: Ralph runs a multi-turn session where the AI spawns parallel sub-agents, and a manager AI approves plans and provides guidance on the user's behalf
 
-This document covers the native Agent Teams mode.
+This document covers the interactive session mode, which works with **all supported tools** (Claude Code, Cursor, Copilot).
 
-## What is Claude Code Agent Teams?
+## What are Agent Teams?
 
-Agent Teams is an experimental feature in Claude Code (v2.1.32+) that lets one Claude session (the "lead") spawn and coordinate other Claude sessions ("teammates"). Teammates have their own context windows, communicate through a shared mailbox, and coordinate through a shared task list.
+Modern AI coding CLIs support spawning parallel sub-agents from a single session. The lead agent coordinates teammates that work on different tasks simultaneously. Examples:
+- **Claude Code**: Agent Teams (teammates communicate through shared mailbox and task list)
+- **Cursor**: Agent sub-sessions with `--resume` for multi-turn coordination
+- **Copilot**: Session-based parallel workflows with `--resume`
 
-For more details, see the [official docs](https://code.claude.com/docs/en/agent-teams).
+As all major CLIs converge on this capability, Ralph's interactive session mode provides a unified interface for all of them.
 
-## Enabling native Agent Teams mode
+## Enabling Agent Teams
 
-### Step 1: Enable the feature flag
+In `ralph.config.json`:
 
-Agent Teams must be enabled in your Claude Code settings. The installer does this automatically, but you can verify:
+```json
+{
+  "agent_teams": true,
+  "turns": 50,
+  "manager_model": "sonnet"
+}
+```
+
+Or use the CLI flag:
+
+```bash
+ralph start -p PROMPT.md --agent-teams
+```
+
+### Claude Code: additional setup
+
+For Claude Code, Agent Teams must also be enabled in your Claude settings:
 
 ```json
 // .claude/settings.json in your project
@@ -28,37 +47,33 @@ Agent Teams must be enabled in your Claude Code settings. The installer does thi
 }
 ```
 
-### Step 2: Set the config flag
+## How it works
 
-In `ralph.config.json`:
+When `agent_teams` is `true`, Ralph runs an interactive multi-turn session using a **two-level loop**:
 
-```json
-{
-  "claude_teams": {
-    "enabled": true,
-    "teammate_mode": "in-process"
-  }
-}
-```
+### Inner loop (turns)
 
-Or use the CLI flag:
+1. Ralph sends the team prompt as the first turn using `claude -p --output-format json`
+2. Claude creates the agent team, proposes a plan, and may ask for approval
+3. A **manager AI** (a separate, cheaper model) reads the output and generates a response (approval, feedback, guidance)
+4. Ralph resumes the session with `claude -p --resume SESSION_ID`, sending the manager's response
+5. This continues for up to `turns` conversations (default: 50)
 
-```bash
-ralph start -p PROMPT.md --claude-teams
-```
+### Outer loop (retries)
 
-## How it works in native mode
+1. After the inner loop finishes (turns exhausted or completion promise detected), the manager AI reads the actual `git diff` from the target repo
+2. It compares the diff against the original prompt and the plan generated in turn 1
+3. If all requirements are met, the session is complete
+4. If requirements are missing, a **fresh session** starts with a summary of what's incomplete
+5. This repeats up to `loop.max_iterations` times (default: 3)
 
-When `claude_teams.enabled` is `true`, the `ralph start` command doesn't spawn shell processes. Instead, it generates a detailed prompt and passes it to Claude Code, asking Claude to:
+### Key config
 
-1. Create an agent team with the specified number of implementers and reviewers
-2. Break the task into subtasks using the shared task list
-3. Assign implementer teammates to work on tasks
-4. Require plan approval from implementers before they start coding
-5. Send completed tasks to reviewer teammates
-6. Handle rejections by reassigning with feedback
-
-The manager becomes the Claude Code **team lead**. Implementers and reviewers become **teammates**.
+| Key | Description | Default |
+|-----|-------------|---------|
+| `turns` | Max conversation turns per attempt | `50` |
+| `loop.max_iterations` | Max retry attempts | `3` |
+| `manager_model` | Model for the manager AI | `sonnet` |
 
 ## Subagent definitions
 
@@ -125,21 +140,23 @@ Or globally in `~/.claude.json`:
 }
 ```
 
-## Shell mode vs. native mode
+## Bash orchestration vs. interactive session mode
 
-| Aspect | Shell mode | Native Agent Teams |
-|--------|-----------|-------------------|
-| How agents run | Separate shell processes, each invoking Claude CLI | Claude Code spawns teammates internally |
-| Communication | File-based mailbox in `state/messages/` | Claude's native mailbox system |
-| Task coordination | Custom file-based task manager with flock | Claude's shared task list |
-| Works with other tools | Yes (Cursor, Copilot, etc.) | Claude Code only |
-| Setup complexity | Just works | Requires Agent Teams feature flag |
-| Token cost | Each process is independent | Managed by Claude (similar cost) |
-| Monitoring | `ralph status` | Shift+Down or tmux panes |
+| Aspect | Bash orchestration | Interactive session |
+|--------|-------------------|-------------------|
+| Who orchestrates | Ralph bash scripts | AI orchestrates team; Ralph manages conversation |
+| How agents run | Separate shell processes (true OS parallelism) | AI spawns sub-agents internally |
+| Communication | File-based mailbox in `state/messages/` | AI-native communication (mailbox, task list) |
+| Task coordination | Custom file-based task manager with flock | AI's shared task list |
+| Works with all tools | Yes | Yes (all major CLIs support sub-agents) |
+| Context sharing | Workers are isolated | All teammates share conversation context |
+| Verification | None (trusts completion promise) | Manager AI reads git diff and verifies requirements |
+| Cost | N one-shot calls | Many turns + manager AI calls (higher) |
+| Monitoring | `ralph status` (task list) | `ralph status` (per-turn/per-attempt logs) |
 
-**Use shell mode** when you want tool-agnostic operation or are using a non-Claude AI tool.
+**Use bash orchestration** when you want full mechanical control, isolated workers, or maximum parallelism.
 
-**Use native mode** when you want Claude Code's built-in team coordination, inter-agent messaging, and plan approval workflows.
+**Use interactive session mode** when you want intelligent team coordination with shared context, automated plan approval, and requirement verification.
 
 ## Hooks
 

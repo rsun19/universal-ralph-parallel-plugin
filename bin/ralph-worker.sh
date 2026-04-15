@@ -50,7 +50,7 @@ run_task() {
   description=$(echo "$task_json" | jq -r '.description')
   review_feedback=$(echo "$task_json" | jq -r '.review_feedback // ""')
 
-  local impl_prompt="${RALPH_ROOT}/state/worker-${WORKER_ID}-prompt.md"
+  local impl_prompt="${RALPH_ROOT}/state/prompts/worker-${WORKER_ID}-prompt.md"
   local impl_template="${RALPH_ROOT}/templates/prompt-implement.md"
 
   if [[ -f "$impl_template" ]]; then
