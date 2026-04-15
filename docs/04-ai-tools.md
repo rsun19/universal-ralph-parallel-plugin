@@ -102,7 +102,7 @@ By default, Ralph respects Cursor's permission config. For unattended loops, pre
 }
 ```
 
-Or skip all prompts at runtime with `ralph start --allow-all` (adds `--force`).
+Or skip all prompts at runtime with `ralph start --allow-all` (adds `--force --approve-mcps`).
 
 Docs: [cursor.com/docs/cli/reference/permissions](https://cursor.com/docs/cli/reference/permissions)
 
