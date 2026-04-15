@@ -44,9 +44,25 @@ Or skip all prompts at runtime with `ralph start --allow-all` (adds `--dangerous
 
 Docs: [code.claude.com/docs/en/permissions](https://code.claude.com/docs/en/permissions)
 
-### Native Agent Teams mode
+### Interactive Agent Teams Mode
 
-If you pass `--claude-teams`, Ralph doesn't use its own shell-based agent spawning. Instead, it generates a prompt that tells Claude Code to create an Agent Team using Claude's built-in system. See [Claude Code Agent Teams](06-claude-teams.md).
+All three tools support interactive agent teams via `--agent-teams`:
+
+```bash
+ralph start -p "Build auth with JWT" --agent-teams
+```
+
+Instead of one-shot `-p` calls, Ralph maintains a conversation across multiple turns using `--resume`. The AI spawns parallel sub-agents internally, and a **manager AI** (a separate, lighter model) reads each turn's output and automatically responds — approving plans, answering questions, and providing guidance.
+
+After the conversation turns are exhausted (or completion is detected), the manager AI verifies the actual `git diff` against the original requirements. If requirements aren't met, a fresh session is started with specific feedback.
+
+**Config keys:**
+- `agent_teams` — enable interactive agent teams (default: false)
+- `turns` — max conversation turns per attempt (default: 50)
+- `loop.max_iterations` — max retry attempts (default: 3)
+- `manager_model` — model for the manager AI (default: sonnet, cheaper is recommended)
+
+See [Agent Teams](06-claude-teams.md) for full details.
 
 ---
 

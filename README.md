@@ -118,14 +118,16 @@ ralph settings
 | `ai_tool` | Which AI tool adapter to use | `claude-code` |
 | `ai_tool_command` | The shell command to invoke the AI tool | varies by adapter |
 | `model` | Model to use (passed to adapter) | `sonnet` |
+| `manager_model` | Model for the manager AI (approvals, verification) | `sonnet` |
+| `turns` | Max conversation turns per attempt (interactive session) | `50` |
 | `team.implementers` | Number of parallel implementer agents | `3` |
 | `team.reviewers` | Number of parallel reviewer agents | `2` |
 | `team.max_retries_per_task` | Max retry attempts per task | `3` |
-| `loop.max_iterations` | Max iterations per agent loop | `50` |
+| `loop.max_iterations` | Max retry attempts if verification fails | `3` |
 | `loop.completion_promise` | Phrase signaling completion | `ALL_TASKS_COMPLETE` |
 | `loop.commit_on_success` | Auto-commit on task completion | `true` |
-| `claude_teams.enabled` | Use Claude Code Agent Teams natively | `false` |
-| `claude_teams.teammate_mode` | `in-process` or `tmux` | `in-process` |
+| `agent_teams` | Enable interactive agent teams (multi-turn session mode) | `false` |
+| `claude_teams.teammate_mode` | Claude-specific: `in-process` or `tmux` | `in-process` |
 
 ## Repo Scanner
 
@@ -161,42 +163,54 @@ Options:
   -R, --reviewers <n>     Number of reviewer agents
   -m, --max-iterations    Max loop iterations per agent
   --completion-promise     Phrase that signals task completion
-  --claude-teams           Use Claude Code Agent Teams (native mode)
+  --agent-teams            Use interactive agent teams (multi-turn session mode)
   --allow-all              Skip all permission prompts in the AI tool
 ```
 
 Run `ralph init` first. The `-p` flag accepts either a file path or inline text. If you omit `-p`, Ralph opens your `$EDITOR` for a full editing experience.
 
-## Claude Code Agent Teams Integration
+## Agent Teams (Interactive Session Mode)
 
-When `claude_teams.enabled` is `true`, Ralph uses Claude Code's native Agent Teams feature instead of shell-based parallelism:
+When `agent_teams` is `true`, Ralph runs an **interactive multi-turn session** where the AI spawns parallel sub-agents and a manager AI acts as the human operator, approving plans and providing guidance. **Works with any supported tool** (Claude Code, Cursor, Copilot):
 
 ```bash
-ralph start -p "Build auth with JWT" --claude-teams
+ralph start -p "Build auth with JWT" --agent-teams
 ```
 
-This creates a Claude Code team where:
-- **You (the lead)** coordinate the team
-- **Implementer teammates** claim and implement tasks
-- **Reviewer teammates** check completed work
-- Communication uses Claude's native mailbox system
-- Tasks use Claude's shared task list with file locking
+### How it works
 
-### Subagent Definitions
+Ralph uses a **two-level loop**:
 
-The plugin provides reusable agent definitions in `adapters/claude-code/agents/`:
+**Inner loop (turns):** Each turn is a CLI `-p` call using `--resume` to maintain conversation context. Between turns, a manager AI reads the output and generates approvals, feedback, or guidance. Bounded by the `turns` config key (default: 50).
 
-- `manager.md` - Coordinates team, manages task list, handles retries
-- `implementer.md` - Implements tasks with full code and tests
-- `reviewer.md` - Reviews code quality, tests, and spec compliance
-
-These can be referenced when spawning teammates:
+**Outer loop (retries):** After the inner loop finishes, the manager AI reads the `git diff`, compares it against the original requirements + plan, and decides if the work is complete. If not, a fresh session starts with specific feedback about what's missing. Bounded by `loop.max_iterations` (default: 3).
 
 ```
-Spawn a teammate using the implementer agent type to work on the auth module.
+Attempt 1:
+  Turn 1: AI creates team, proposes plan → Manager approves
+  Turn 2: AI implements tasks → Manager provides feedback
+  ...
+  Turn N: Session ends → Manager reads git diff → "Auth tests missing"
+  → RETRY
+
+Attempt 2:
+  Turn 1: Fresh session with: "Previous attempt missing auth tests"
+  ...
+  Turn N: Manager verifies diff → "All requirements met" → DONE
 ```
+
+### Configuration
+
+| Key | Description | Default |
+|-----|-------------|---------|
+| `agent_teams` | Enable interactive agent teams | `false` |
+| `turns` | Max conversation turns per attempt | `50` |
+| `loop.max_iterations` | Max retry attempts | `3` |
+| `manager_model` | Model for the manager AI (cheaper is fine) | `sonnet` |
 
 ## Architecture
+
+### Mode 1: Bash Orchestration (default)
 
 ```
 User
@@ -216,6 +230,24 @@ User
                 └── All approved → completion report
 ```
 
+### Mode 2: Interactive Session (agent_teams: true)
+
+```
+User
+ └── ralph CLI
+      └── Session Loop (outer: retries, inner: turns)
+           ├── Attempt 1:
+           │    ├── Turn 1: Send team prompt → AI creates team
+           │    ├── Turn 2: Manager AI approves plan → resume
+           │    ├── Turn N: Manager AI provides feedback → resume
+           │    └── Verify: Manager AI reads git diff → incomplete
+           ├── Attempt 2:
+           │    ├── Turn 1: Fresh session with retry feedback
+           │    ├── ...
+           │    └── Verify: Manager AI reads git diff → COMPLETE
+           └── Done
+```
+
 ### Task States
 
 ```
@@ -231,7 +263,9 @@ All coordination uses the filesystem (no network dependencies):
 - **Tasks**: `state/tasks/*.json` - individual task files with `flock` locking
 - **Messages**: `state/messages/*.json` - inter-agent mailbox
 - **Agents**: `state/agents/*.json` - agent registry with heartbeats
+- **Prompts**: `state/prompts/` - generated prompt files
 - **Logs**: `state/logs/` - iteration output logs
+- **Session logs**: `state/logs/agent-teams/attempt-N/` - per-turn + verification logs
 
 ## Prompt Writing Best Practices
 

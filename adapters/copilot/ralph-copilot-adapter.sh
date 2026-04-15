@@ -9,7 +9,7 @@
 # Docs:    https://docs.github.com/en/copilot/how-tos/copilot-cli/use-copilot-cli-agents/overview
 # Perms:   https://docs.github.com/en/copilot/how-tos/copilot-cli/allowing-tools
 
-get_adapter_command() {
+_copilot_base_flags() {
   local config_file="$1"
   local model
   model=$(config_get "$config_file" '.model' 'sonnet')
@@ -18,6 +18,34 @@ get_adapter_command() {
 
   if [[ -n "$model" ]] && [[ "$model" != "null" ]]; then
     cmd="${cmd} --model \"${model}\""
+  fi
+
+  echo "$cmd"
+}
+
+get_adapter_command() {
+  echo "$(_copilot_base_flags "$1") -p"
+}
+
+get_initial_command() {
+  echo "$(_copilot_base_flags "$1") --output-format json -p"
+}
+
+get_session_command() {
+  local config_file="$1"
+  local session_id="$2"
+  echo "$(_copilot_base_flags "$config_file") --resume=\"${session_id}\" --output-format json -p"
+}
+
+get_manager_command() {
+  local config_file="$1"
+  local mgr_model
+  mgr_model=$(config_get "$config_file" '.manager_model' 'sonnet')
+
+  local cmd="copilot --allow-all"
+
+  if [[ -n "$mgr_model" ]] && [[ "$mgr_model" != "null" ]]; then
+    cmd="${cmd} --model \"${mgr_model}\""
   fi
 
   echo "${cmd} -p"

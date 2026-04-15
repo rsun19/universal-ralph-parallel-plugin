@@ -48,7 +48,8 @@ trap cleanup EXIT INT TERM
 phase_plan() {
   ralph_log INFO "=== Phase 1: Planning ==="
   
-  local plan_prompt="${RALPH_ROOT}/state/.manager-plan-prompt.md"
+  local plan_prompt="${RALPH_ROOT}/state/prompts/.manager-plan-prompt.md"
+  mkdir -p "${RALPH_ROOT}/state/prompts"
   local plan_template="${RALPH_ROOT}/templates/prompt-plan.md"
   
   # Build planning prompt

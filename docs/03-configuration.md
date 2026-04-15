@@ -12,19 +12,21 @@ Settings live in `ralph.config.json`, which is created when you run `ralph init`
   "ai_tool": "claude-code",
   "ai_tool_command": "claude -p",
   "model": "sonnet",
+  "manager_model": "sonnet",
+  "turns": 50,
   "team": {
     "implementers": 3,
     "reviewers": 2,
     "max_retries_per_task": 3
   },
   "loop": {
-    "max_iterations": 50,
+    "max_iterations": 3,
     "completion_promise": "ALL_TASKS_COMPLETE",
     "commit_on_success": true,
     "pause_between_iterations_sec": 2
   },
+  "agent_teams": false,
   "claude_teams": {
-    "enabled": false,
     "teammate_mode": "in-process"
   },
   "review": {
@@ -107,6 +109,26 @@ This is adapter-specific. For Claude Code, it maps to `--model sonnet`. Other ad
 
 ---
 
+### `manager_model`
+
+**What it does:** Which model to use for the manager AI in interactive session mode. The manager AI approves plans, answers questions, and verifies completion between turns.
+
+**Default:** `"sonnet"`
+
+A cheaper/faster model is recommended here since the manager only needs to make quick approval/rejection decisions, not write code. Even if your main `model` is `opus`, the manager can safely run on `sonnet` or `haiku`.
+
+---
+
+### `turns`
+
+**What it does:** Maximum number of conversation turns per attempt in interactive session mode (`agent_teams: true`). Each turn is one message exchange between Ralph and the AI.
+
+**Default:** `50`
+
+This is the inner loop bound. If the AI doesn't produce a completion promise within this many turns, the attempt ends and the outer verification loop kicks in.
+
+---
+
 ### `team.implementers`
 
 **What it does:** How many implementer agents to run in parallel.
@@ -145,13 +167,13 @@ When a reviewer rejects a task, it goes back to `pending` with the rejection fee
 
 ### `loop.max_iterations`
 
-**What it does:** Maximum number of AI calls per agent per task.
+**What it does:** In **bash orchestration mode**, this is the maximum number of AI calls per agent per task. In **interactive session mode**, this is the maximum number of retry attempts if the manager AI determines requirements aren't fully met after reading the git diff.
 
-**Default:** `50`
+**Default:** `3`
 
-This is a safety limit. Each implementer will run at most this many AI iterations on a single task before giving up. This prevents infinite loops on impossible tasks.
+In bash mode, this is a safety limit per worker. In interactive mode, this is the outer loop bound — each retry starts a fresh session with specific feedback about what's missing.
 
-**CLI override:** `-m 30` or `--max-iterations 30`
+**CLI override:** `-m 5` or `--max-iterations 5`
 
 ---
 
@@ -187,15 +209,15 @@ Prevents hammering the AI API too aggressively. Increase if you're hitting rate 
 
 ---
 
-### `claude_teams.enabled`
+### `agent_teams`
 
-**What it does:** Whether to use Claude Code's native Agent Teams feature instead of shell-based parallelism.
+**What it does:** Whether to use interactive agent teams mode instead of shell-based parallelism. Works with all supported AI tools (Claude Code, Cursor, Copilot).
 
 **Default:** `false`
 
-When `true`, Ralph delegates to Claude Code's built-in team system where the manager becomes a "team lead" and implementers/reviewers become "teammates" communicating through Claude's native mailbox. See [Claude Code Agent Teams](06-claude-teams.md).
+When `true`, Ralph runs a multi-turn interactive session where the AI spawns parallel sub-agents internally. A manager AI (configured via `manager_model`) responds on the user's behalf between turns, approving plans and providing guidance. After each attempt, the manager AI verifies the git diff against requirements. See [Agent Teams](06-claude-teams.md).
 
-**CLI override:** `--claude-teams`
+**CLI override:** `--agent-teams` (or `--claude-teams` for backward compat)
 
 ---
 
@@ -249,8 +271,9 @@ When `true`, Ralph delegates to Claude Code's built-in team system where the man
 | `-p, --prompt` | `prompt_file` | `-p PROMPT.md` |
 | `-n, --implementers` | `team.implementers` | `-n 5` |
 | `-R, --reviewers` | `team.reviewers` | `-R 3` |
-| `-m, --max-iterations` | `loop.max_iterations` | `-m 30` |
+| `-m, --max-iterations` | `loop.max_iterations` | `-m 5` |
 | `--completion-promise` | `loop.completion_promise` | `--completion-promise DONE` |
-| `--claude-teams` | `claude_teams.enabled` | `--claude-teams` |
+| `--agent-teams` | `agent_teams` | `--agent-teams` |
+| `--allow-all` | `allow_all` | `--allow-all` |
 
 CLI flags override config file values. The effective config is written to `state/.ralph-config-effective.json` so you can inspect what was actually used.

@@ -113,7 +113,7 @@ wait_for_file() {
 get_state_dir() {
   local ralph_root="${1:-$(resolve_ralph_root)}"
   local state_dir="${ralph_root}/state"
-  mkdir -p "$state_dir"/{tasks,messages,agents}
+  mkdir -p "$state_dir"/{tasks,messages,agents,prompts}
   echo "$state_dir"
 }
 

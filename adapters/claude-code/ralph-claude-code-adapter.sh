@@ -9,6 +9,7 @@
 #
 # Docs: https://code.claude.com/docs/en/permissions
 
+# One-shot command (existing workers/reviewers)
 get_adapter_command() {
   local config_file="$1"
   local model allow_all
@@ -23,6 +24,67 @@ get_adapter_command() {
 
   if [[ -n "$model" ]] && [[ "$model" != "null" ]]; then
     cmd="${cmd} --model \"${model}\""
+  fi
+
+  echo "${cmd} -p"
+}
+
+# First turn of an interactive session (no --resume, with --output-format json)
+get_initial_command() {
+  local config_file="$1"
+  local model allow_all
+  model=$(config_get "$config_file" '.model' 'sonnet')
+  allow_all=$(config_get "$config_file" '.allow_all' 'false')
+
+  local cmd="claude"
+
+  if [[ "$allow_all" == "true" ]]; then
+    cmd="${cmd} --dangerously-skip-permissions"
+  fi
+
+  if [[ -n "$model" ]] && [[ "$model" != "null" ]]; then
+    cmd="${cmd} --model \"${model}\""
+  fi
+
+  echo "${cmd} --output-format json -p"
+}
+
+# Resume an existing session by ID
+get_session_command() {
+  local config_file="$1"
+  local session_id="$2"
+  local model allow_all
+  model=$(config_get "$config_file" '.model' 'sonnet')
+  allow_all=$(config_get "$config_file" '.allow_all' 'false')
+
+  local cmd="claude"
+
+  if [[ "$allow_all" == "true" ]]; then
+    cmd="${cmd} --dangerously-skip-permissions"
+  fi
+
+  if [[ -n "$model" ]] && [[ "$model" != "null" ]]; then
+    cmd="${cmd} --model \"${model}\""
+  fi
+
+  echo "${cmd} --resume \"${session_id}\" --output-format json -p"
+}
+
+# Lightweight command for the manager AI (uses manager_model, always one-shot)
+get_manager_command() {
+  local config_file="$1"
+  local mgr_model allow_all
+  mgr_model=$(config_get "$config_file" '.manager_model' 'sonnet')
+  allow_all=$(config_get "$config_file" '.allow_all' 'false')
+
+  local cmd="claude"
+
+  if [[ "$allow_all" == "true" ]]; then
+    cmd="${cmd} --dangerously-skip-permissions"
+  fi
+
+  if [[ -n "$mgr_model" ]] && [[ "$mgr_model" != "null" ]]; then
+    cmd="${cmd} --model \"${mgr_model}\""
   fi
 
   echo "${cmd} -p"

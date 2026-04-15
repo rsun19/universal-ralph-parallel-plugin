@@ -50,9 +50,11 @@ Commands:
   start       Start a Ralph agent team on a task
   scan        Find git repos on your system, pick one, and start Ralph
   status      Show current team and task status
+  logs        Browse session logs interactively
   cancel      Cancel all running agents and clean up
   plan        Run planning mode only (generate fix_plan.md)
   settings    Open ralph.config.json in your editor
+  prune       Wipe all state (logs, tasks, prompts) back to factory
 
 Options:
   -c, --config <file>    Config file (default: ralph.config.json)
@@ -63,7 +65,8 @@ Options:
   -R, --reviewers <n>    Number of reviewer agents (default: 2)
   -m, --max-iterations   Max loop iterations per agent (default: 50)
   --completion-promise    Phrase that signals task completion
-  --claude-teams          Use Claude Code Agent Teams (native mode)
+  --agent-teams           Use interactive agent teams (multi-turn session mode)
+  --claude-teams          Alias for --agent-teams (backward compat)
   --allow-all             Skip all permission prompts in the AI tool
   -h, --help              Show this help
 
@@ -91,6 +94,12 @@ Examples:
   # Check status / cancel
   ralph status
   ralph cancel
+
+  # Browse session logs
+  ralph logs
+
+  # Wipe all state back to factory
+  ralph prune
 EOF
 }
 
@@ -128,8 +137,8 @@ main() {
         config_overrides+=("loop.max_iterations=$2"); shift 2 ;;
       --completion-promise)
         config_overrides+=("loop.completion_promise=$2"); shift 2 ;;
-      --claude-teams)
-        config_overrides+=("claude_teams.enabled=true"); shift ;;
+      --claude-teams|--agent-teams)
+        config_overrides+=("agent_teams=true"); shift ;;
       --allow-all)
         config_overrides+=("allow_all=true"); shift ;;
       -h|--help)
@@ -139,13 +148,19 @@ main() {
     esac
   done
 
-  # init and settings don't require an existing config
+  # These commands don't require an existing config
   case "$command" in
     init)
       cmd_init "${args[@]:-}"
       return ;;
     settings|config)
       cmd_settings "$config_file"
+      return ;;
+    prune)
+      cmd_prune
+      return ;;
+    logs)
+      cmd_logs
       return ;;
     help|--help|-h)
       usage
@@ -377,9 +392,8 @@ resolve_prompt() {
       echo "$input"
       return 0
     fi
-    # Otherwise treat it as inline text
-    local tmpfile="${RALPH_ROOT}/state/.ralph-prompt-$(date +%s).md"
-    mkdir -p "${RALPH_ROOT}/state"
+    local tmpfile="${RALPH_ROOT}/state/prompts/.ralph-prompt-$(date +%s).md"
+    mkdir -p "${RALPH_ROOT}/state/prompts"
     printf '%s\n' "$input" > "$tmpfile"
     echo "$tmpfile"
     return 0
@@ -395,8 +409,8 @@ resolve_prompt() {
         echo "$cfg_input"
         return 0
       fi
-      local tmpfile="${RALPH_ROOT}/state/.ralph-prompt-$(date +%s).md"
-      mkdir -p "${RALPH_ROOT}/state"
+      local tmpfile="${RALPH_ROOT}/state/prompts/.ralph-prompt-$(date +%s).md"
+      mkdir -p "${RALPH_ROOT}/state/prompts"
       printf '%s\n' "$cfg_input" > "$tmpfile"
       echo "$tmpfile"
       return 0
@@ -408,8 +422,8 @@ resolve_prompt() {
     fi
     cfg_text=$(config_get "$config" '.prompt_text' '')
     if [[ -n "$cfg_text" ]]; then
-      local tmpfile="${RALPH_ROOT}/state/.ralph-prompt-$(date +%s).md"
-      mkdir -p "${RALPH_ROOT}/state"
+      local tmpfile="${RALPH_ROOT}/state/prompts/.ralph-prompt-$(date +%s).md"
+      mkdir -p "${RALPH_ROOT}/state/prompts"
       printf '%s\n' "$cfg_text" > "$tmpfile"
       echo "$tmpfile"
       return 0
@@ -418,8 +432,8 @@ resolve_prompt() {
 
   # 3. Interactive: open $EDITOR for a rich editing experience
   if [[ -t 0 ]]; then
-    local tmpfile="${RALPH_ROOT}/state/.ralph-prompt-$(date +%s).md"
-    mkdir -p "${RALPH_ROOT}/state"
+    local tmpfile="${RALPH_ROOT}/state/prompts/.ralph-prompt-$(date +%s).md"
+    mkdir -p "${RALPH_ROOT}/state/prompts"
 
     local editor="${EDITOR:-${VISUAL:-}}"
     if [[ -z "$editor" ]]; then
@@ -495,10 +509,14 @@ cmd_start() {
   prompt_file=$(resolve_prompt "$prompt_input" "$config") || \
     ralph_die "Prompt required. Use -p \"your prompt\" or -p file.md"
 
-  local target_repo ai_tool claude_teams_enabled
+  local target_repo ai_tool agent_teams
   target_repo=$(config_get "$config" '.target_repo' '.')
   ai_tool=$(config_get "$config" '.ai_tool' 'claude-code')
-  claude_teams_enabled=$(config_get "$config" '.claude_teams.enabled' 'false')
+  # Support both new "agent_teams" key and legacy "claude_teams.enabled"
+  agent_teams=$(config_get "$config" '.agent_teams' '')
+  if [[ -z "$agent_teams" ]]; then
+    agent_teams=$(config_get "$config" '.claude_teams.enabled' 'false')
+  fi
 
   # Resolve target repo to absolute path
   if [[ "$target_repo" != /* ]]; then
@@ -509,19 +527,18 @@ cmd_start() {
   ralph_log INFO "  Target repo: $target_repo"
   ralph_log INFO "  AI tool: $ai_tool"
   ralph_log INFO "  Prompt: $prompt_file"
-  ralph_log INFO "  Claude Teams: $claude_teams_enabled"
+  ralph_log INFO "  Agent Teams (interactive): $agent_teams"
 
   # Clean previous state
   rm -rf "${RALPH_ROOT}/state/tasks"/*.json 2>/dev/null || true
   rm -rf "${RALPH_ROOT}/state/agents"/*.json 2>/dev/null || true
   rm -rf "${RALPH_ROOT}/state/messages"/*.json 2>/dev/null || true
-  mkdir -p "${RALPH_ROOT}/state"/{tasks,agents,messages,logs}
+  mkdir -p "${RALPH_ROOT}/state"/{tasks,agents,messages,logs,prompts}
 
-  if [[ "$claude_teams_enabled" == "true" ]]; then
-    ralph_log INFO "Delegating to Claude Code Agent Teams (native mode)..."
-    ralph_log WARN "Note: 'ralph status' does not track native Claude Teams."
-    ralph_log WARN "Claude Code manages the team internally. Use Claude's own UI to monitor progress."
-    exec "${RALPH_ROOT}/adapters/claude-code/ralph-claude-teams.sh" "$config" "$prompt_file"
+  if [[ "$agent_teams" == "true" ]]; then
+    ralph_log INFO "Starting interactive agent teams session (works with any AI tool)..."
+    ralph_log INFO "  Use 'ralph status' to see per-turn progress."
+    exec "${RALPH_ROOT}/bin/ralph-interactive.sh" "$config" "$prompt_file"
   else
     exec "${RALPH_ROOT}/bin/ralph-manager.sh" "$config" "$prompt_file"
   fi
@@ -689,25 +706,63 @@ cmd_init() {
 
   echo ""
 
-  # --- Step 5: Loop settings ---
-  printf "  Max iterations per agent [50]: "
+  # --- Step 5: Interactive session settings ---
+  printf "  Max conversation turns per attempt [50]: "
+  read -r max_turns
+  max_turns="${max_turns:-50}"
+
+  printf "  Max retry attempts (outer loop) [3]: "
   read -r max_iter
-  max_iter="${max_iter:-50}"
+  max_iter="${max_iter:-3}"
 
   echo ""
 
-  # --- Step 6: Claude Teams ---
-  local claude_teams="false"
-  if [[ "$ai_tool" == "claude-code" ]]; then
-    printf "  Enable Claude Code Agent Teams (native mode)? [y/N]: "
-    read -r ct
-    if [[ "$ct" == "y" ]] || [[ "$ct" == "Y" ]]; then
-      claude_teams="true"
-    fi
-    echo ""
-  fi
+  # --- Step 5b: Manager model ---
+  echo "  The manager AI reviews progress and approves plans between turns."
+  echo "  A cheaper/faster model is recommended to reduce cost."
+  echo ""
+  printf "  Manager model [sonnet]: "
+  read -r mgr_model
+  mgr_model="${mgr_model:-sonnet}"
 
-  # --- Step 7: Custom AI command (for generic tools) ---
+  echo ""
+
+  # --- Step 6: Agent Teams (interactive session mode) ---
+  local agent_teams="false"
+  echo "  Enable Agent Teams? (interactive multi-turn session with manager AI)"
+  echo "  The AI spawns parallel sub-agents and a manager AI approves their work."
+  echo "  Works with all supported tools (Claude Code, Cursor, Copilot)."
+  echo ""
+  printf "  Enable Agent Teams? [y/N]: "
+  read -r at
+  if [[ "$at" == "y" ]] || [[ "$at" == "Y" ]]; then
+    agent_teams="true"
+  fi
+  echo ""
+
+  # --- Step 7: Allow all permissions ---
+  local allow_all="false"
+  if [[ "$ai_tool" == "copilot" ]]; then
+    allow_all="true"
+    echo "  Copilot CLI has no config-based permissions — --allow-all is always on."
+  else
+    echo "  Skip all permission prompts? (runs AI tools unattended)"
+    if [[ "$ai_tool" == "claude-code" ]]; then
+      echo "  Adds --dangerously-skip-permissions to claude."
+    elif [[ "$ai_tool" == "cursor" ]]; then
+      echo "  Adds --force to agent."
+    fi
+    echo "  You can also configure permissions via config files instead."
+    echo ""
+    printf "  Allow all permissions? [y/N]: "
+    read -r aa
+    if [[ "$aa" == "y" ]] || [[ "$aa" == "Y" ]]; then
+      allow_all="true"
+    fi
+  fi
+  echo ""
+
+  # --- Step 8: Custom AI command (for generic tools) ---
   if [[ "$ai_tool" == "generic" ]]; then
     echo "  Enter the command to invoke your AI tool."
     echo "  Ralph will pipe the prompt into this command via stdin."
@@ -729,6 +784,9 @@ cmd_init() {
   "ai_tool": $(printf '%s' "$ai_tool" | jq -Rs .),
   "ai_tool_command": $(printf '%s' "$ai_tool_command" | jq -Rs .),
   "model": $(printf '%s' "$model" | jq -Rs .),
+  "manager_model": $(printf '%s' "$mgr_model" | jq -Rs .),
+  "allow_all": ${allow_all},
+  "turns": ${max_turns},
   "team": {
     "implementers": ${n_impl},
     "reviewers": ${n_rev},
@@ -740,8 +798,8 @@ cmd_init() {
     "commit_on_success": true,
     "pause_between_iterations_sec": 2
   },
+  "agent_teams": ${agent_teams},
   "claude_teams": {
-    "enabled": ${claude_teams},
     "teammate_mode": "in-process"
   },
   "review": {
@@ -754,65 +812,70 @@ cmd_init() {
 CONFIGEOF
 
   ralph_log INFO "Config saved to: $config_file"
-  mkdir -p "${RALPH_ROOT}/state"
+  mkdir -p "${RALPH_ROOT}/state"/{tasks,agents,messages,logs,prompts}
 
   echo ""
   ralph_log INFO "Done! Ralph is ready."
   echo ""
 
-  # Permission configuration guidance
-  case "$ai_tool" in
-    claude-code)
-      echo "  ┌─ Permissions ──────────────────────────────────────────────┐"
-      echo "  │ Ralph respects Claude Code's permission config by default. │"
-      echo "  │ For unattended loops, configure permissions:               │"
-      echo "  │                                                            │"
-      echo "  │   ~/.claude/settings.json:                                 │"
-      echo "  │   {                                                        │"
-      echo "  │     \"permissions\": {                                       │"
-      echo "  │       \"allow\": [\"Bash\", \"Read\", \"Edit\", \"WebFetch\"]         │"
-      echo "  │     }                                                      │"
-      echo "  │   }                                                        │"
-      echo "  │                                                            │"
-      echo "  │ Or skip all prompts at runtime:                            │"
-      echo "  │   ralph start --allow-all -p \"your prompt\"                 │"
-      echo "  │                                                            │"
-      echo "  │ Docs: https://code.claude.com/docs/en/permissions          │"
-      echo "  └────────────────────────────────────────────────────────────┘"
-      echo ""
+  # Permission configuration guidance (skip if user already chose allow_all)
+  if [[ "$allow_all" == "true" ]]; then
+    echo "  Permissions: allow_all is ON — all tools run without prompts."
+    echo ""
+  else
+    case "$ai_tool" in
+      claude-code)
+        echo "  ┌─ Permissions ──────────────────────────────────────────────┐"
+        echo "  │ Ralph respects Claude Code's permission config by default. │"
+        echo "  │ For unattended loops, configure permissions:               │"
+        echo "  │                                                            │"
+        echo "  │   ~/.claude/settings.json:                                 │"
+        echo "  │   {                                                        │"
+        echo "  │     \"permissions\": {                                       │"
+        echo "  │       \"allow\": [\"Bash\", \"Read\", \"Edit\", \"WebFetch\"]         │"
+        echo "  │     }                                                      │"
+        echo "  │   }                                                        │"
+        echo "  │                                                            │"
+        echo "  │ Or re-run 'ralph init' and enable allow_all,               │"
+        echo "  │ or pass --allow-all at runtime.                            │"
+        echo "  │                                                            │"
+        echo "  │ Docs: https://code.claude.com/docs/en/permissions          │"
+        echo "  └────────────────────────────────────────────────────────────┘"
+        echo ""
+        ;;
+      cursor)
+        echo "  ┌─ Permissions ──────────────────────────────────────────────┐"
+        echo "  │ Ralph respects Cursor's permission config by default.      │"
+        echo "  │ For unattended loops, configure permissions:               │"
+        echo "  │                                                            │"
+        echo "  │   ~/.cursor/cli-config.json:                               │"
+        echo "  │   {                                                        │"
+        echo "  │     \"permissions\": {                                       │"
+        echo "  │       \"allow\": [                                           │"
+        echo "  │         \"Shell(*)\", \"Read(**)\", \"Write(**)\", \"Mcp(*:*)\"    │"
+        echo "  │       ]                                                    │"
+        echo "  │     }                                                      │"
+        echo "  │   }                                                        │"
+        echo "  │                                                            │"
+        echo "  │ Or re-run 'ralph init' and enable allow_all,               │"
+        echo "  │ or pass --allow-all at runtime.                            │"
+        echo "  │                                                            │"
+        echo "  │ Docs: https://cursor.com/docs/cli/reference/permissions    │"
+        echo "  └────────────────────────────────────────────────────────────┘"
+        echo ""
       ;;
-    cursor)
-      echo "  ┌─ Permissions ──────────────────────────────────────────────┐"
-      echo "  │ Ralph respects Cursor's permission config by default.      │"
-      echo "  │ For unattended loops, configure permissions:               │"
-      echo "  │                                                            │"
-      echo "  │   ~/.cursor/cli-config.json:                               │"
-      echo "  │   {                                                        │"
-      echo "  │     \"permissions\": {                                       │"
-      echo "  │       \"allow\": [                                           │"
-      echo "  │         \"Shell(*)\", \"Read(**)\", \"Write(**)\", \"Mcp(*:*)\"    │"
-      echo "  │       ]                                                    │"
-      echo "  │     }                                                      │"
-      echo "  │   }                                                        │"
-      echo "  │                                                            │"
-      echo "  │ Or skip all prompts at runtime:                            │"
-      echo "  │   ralph start --allow-all -p \"your prompt\"                 │"
-      echo "  │                                                            │"
-      echo "  │ Docs: https://cursor.com/docs/cli/reference/permissions    │"
-      echo "  └────────────────────────────────────────────────────────────┘"
-      echo ""
-      ;;
-    copilot)
-      echo "  ┌─ Permissions ──────────────────────────────────────────────┐"
-      echo "  │ Copilot CLI has no config-file-based permission system.    │"
-      echo "  │ --allow-all is included by default for unattended loops.   │"
-      echo "  │                                                            │"
-      echo "  │ Docs: https://docs.github.com/en/copilot/how-tos/         │"
-      echo "  │       copilot-cli/allowing-tools                           │"
-      echo "  └────────────────────────────────────────────────────────────┘"
-      echo ""
-      ;;
-  esac
+      copilot)
+        echo "  ┌─ Permissions ──────────────────────────────────────────────┐"
+        echo "  │ Copilot CLI has no config-file-based permission system.    │"
+        echo "  │ --allow-all is included by default for unattended loops.   │"
+        echo "  │                                                            │"
+        echo "  │ Docs: https://docs.github.com/en/copilot/how-tos/         │"
+        echo "  │       copilot-cli/allowing-tools                           │"
+        echo "  └────────────────────────────────────────────────────────────┘"
+        echo ""
+        ;;
+    esac
+  fi
 
   echo "  Next steps:"
   echo "    ralph start -p \"Describe what you want built\""
@@ -824,55 +887,100 @@ cmd_status() {
   local config="$1"
   require_jq
 
-  local claude_teams_enabled
-  claude_teams_enabled=$(config_get "$config" '.claude_teams.enabled' 'false')
+  local agent_teams
+  agent_teams=$(config_get "$config" '.agent_teams' '')
+  if [[ -z "$agent_teams" ]]; then
+    agent_teams=$(config_get "$config" '.claude_teams.enabled' 'false')
+  fi
 
-  if [[ "$claude_teams_enabled" == "true" ]]; then
-    echo "=== Ralph Wiggum Status (Claude Teams Native Mode) ==="
-    echo ""
-    ralph_log WARN "Claude manages tasks and agents internally in native mode."
+  if [[ "$agent_teams" == "true" ]]; then
+    echo "=== Ralph Wiggum Status (Interactive Session Mode) ==="
     echo ""
 
-    local log_dir="${RALPH_ROOT}/state/logs/claude-teams"
-    local latest_log=""
-    if [[ -d "$log_dir" ]]; then
-      latest_log=$(ls -t "$log_dir"/session-*.log 2>/dev/null | head -1)
+    local log_dir="${RALPH_ROOT}/state/logs/agent-teams"
+
+    if [[ ! -d "$log_dir" ]]; then
+      echo "  No session logs found. Run 'ralph start' to begin."
+      return
     fi
 
-    if [[ -n "$latest_log" ]] && [[ -f "$latest_log" ]]; then
-      local log_size
-      log_size=$(wc -c < "$latest_log" | tr -d ' ')
-      local log_lines
-      log_lines=$(wc -l < "$latest_log" | tr -d ' ')
-      echo "--- Claude Teams Session Log ---"
-      echo "  File: $latest_log"
-      echo "  Size: ${log_size} bytes, ${log_lines} lines"
-      echo ""
+    # Find the latest attempt directory
+    local latest_attempt=""
+    for d in "$log_dir"/attempt-*/; do
+      [[ -d "$d" ]] && latest_attempt="$d"
+    done
 
-      # Check if still running (file modified in last 30 seconds)
+    if [[ -z "$latest_attempt" ]]; then
+      echo "  No session attempts found. Run 'ralph start' to begin."
+      return
+    fi
+
+    local attempt_num
+    attempt_num=$(basename "$latest_attempt" | sed 's/attempt-//')
+    local max_retries
+    max_retries=$(config_get "$config" '.loop.max_iterations' '3')
+
+    echo "--- Attempt ${attempt_num}/${max_retries} ---"
+    echo ""
+
+    # Count turns
+    local turn_count=0
+    local latest_turn=""
+    for f in "$latest_attempt"/turn-*.log; do
+      [[ -f "$f" ]] || continue
+      turn_count=$((turn_count + 1))
+      latest_turn="$f"
+    done
+
+    local max_turns
+    max_turns=$(config_get "$config" '.turns' '50')
+    echo "  Turns: ${turn_count}/${max_turns}"
+
+    # Check if still running (latest file modified in last 30 seconds)
+    if [[ -n "$latest_turn" ]]; then
       local now_epoch mod_epoch
       now_epoch=$(date +%s)
       if [[ "$(uname)" == "Darwin" ]]; then
-        mod_epoch=$(stat -f %m "$latest_log")
+        mod_epoch=$(stat -f %m "$latest_turn")
       else
-        mod_epoch=$(stat -c %Y "$latest_log")
+        mod_epoch=$(stat -c %Y "$latest_turn")
       fi
       local age=$(( now_epoch - mod_epoch ))
-      if [[ $age -lt 30 ]]; then
+      if [[ $age -lt 60 ]]; then
         echo "  Status: RUNNING (last output ${age}s ago)"
       else
         echo "  Status: IDLE (last output ${age}s ago)"
       fi
-      echo ""
-
-      echo "--- Last 30 lines ---"
-      tail -30 "$latest_log"
-      echo ""
-      echo "  Full log: tail -f $latest_log"
-    else
-      echo "  No Claude Teams session log found."
-      echo "  Run 'ralph start' to begin a session."
     fi
+
+    # Show verification result if it exists
+    local verification="${latest_attempt}/verification.log"
+    if [[ -f "$verification" ]]; then
+      echo ""
+      echo "--- Verification Verdict ---"
+      cat "$verification"
+    fi
+
+    # Show latest manager response
+    local latest_mgr=""
+    for f in "$latest_attempt"/manager-*.log; do
+      [[ -f "$f" ]] && latest_mgr="$f"
+    done
+    if [[ -n "$latest_mgr" ]]; then
+      echo ""
+      echo "--- Last Manager Response ---"
+      cat "$latest_mgr"
+    fi
+
+    # Show last turn output (truncated)
+    if [[ -n "$latest_turn" ]]; then
+      echo ""
+      echo "--- Last Turn Output (last 20 lines) ---"
+      tail -20 "$latest_turn"
+    fi
+
+    echo ""
+    echo "  Logs: $latest_attempt"
     return
   fi
 
@@ -916,6 +1024,232 @@ cmd_cancel() {
 
   ralph_log INFO "All agents cancelled. Task state preserved for inspection."
   ralph_log INFO "Run 'ralph status' to see final task states."
+}
+
+cmd_logs() {
+  local logs_root="${RALPH_ROOT}/state/logs"
+
+  if [[ ! -d "$logs_root" ]]; then
+    ralph_log INFO "No logs found. Run 'ralph start' to generate session logs."
+    return
+  fi
+
+  local pager="${PAGER:-less}"
+  if ! command -v "$pager" >/dev/null 2>&1; then
+    pager="cat"
+  fi
+
+  while true; do
+    _logs_browse_runs "$logs_root" "$pager" || break
+  done
+}
+
+_logs_browse_runs() {
+  local logs_root="$1"
+  local pager="$2"
+
+  local -a run_dirs=()
+  local -a run_labels=()
+
+  # Collect run-NNN-<branch> dirs under agent-teams/
+  if [[ -d "${logs_root}/agent-teams" ]]; then
+    for d in "${logs_root}/agent-teams"/run-*/; do
+      [[ -d "$d" ]] || continue
+      run_dirs+=("$d")
+    done
+    # Legacy: bare attempt-* dirs directly under agent-teams/
+    for d in "${logs_root}/agent-teams"/attempt-*/; do
+      [[ -d "$d" ]] || continue
+      run_dirs+=("${logs_root}/agent-teams")
+      break  # only add once for the legacy flat layout
+    done
+  fi
+
+  # Collect claude-teams/ legacy logs
+  if [[ -d "${logs_root}/claude-teams" ]]; then
+    local ct_files=0
+    for f in "${logs_root}/claude-teams"/*; do
+      [[ -e "$f" ]] && ct_files=1 && break
+    done
+    if [[ $ct_files -eq 1 ]]; then
+      run_dirs+=("${logs_root}/claude-teams")
+    fi
+  fi
+
+  if [[ ${#run_dirs[@]} -eq 0 ]]; then
+    ralph_log INFO "No session logs found."
+    return 1
+  fi
+
+  echo ""
+  echo "=== Ralph Session Logs ==="
+  echo ""
+
+  local idx=1
+  for d in "${run_dirs[@]}"; do
+    local label modified_at file_count
+    label=$(_logs_run_label "$d")
+
+    file_count=$(find "$d" -type f 2>/dev/null | wc -l | tr -d ' ')
+
+    local newest=""
+    newest=$(find "$d" -type f -print0 2>/dev/null | xargs -0 ls -t 2>/dev/null | head -1)
+    if [[ -n "$newest" ]]; then
+      if [[ "$(uname)" == "Darwin" ]]; then
+        modified_at=$(stat -f "%Sm" -t "%Y-%m-%d %H:%M" "$newest" 2>/dev/null || echo "unknown")
+      else
+        modified_at=$(stat -c "%y" "$newest" 2>/dev/null | cut -d. -f1 || echo "unknown")
+      fi
+    else
+      modified_at="empty"
+    fi
+
+    printf "  %3d) %-40s  %s files  (%s)\n" "$idx" "$label" "$file_count" "$modified_at"
+    run_labels+=("$label")
+    idx=$((idx + 1))
+  done
+
+  echo ""
+  local count=${#run_dirs[@]}
+  local selection
+  printf "  Select a run [1-%d] (or 'q' to quit): " "$count"
+  read -r selection </dev/tty
+
+  if [[ "$selection" == "q" || "$selection" == "Q" || -z "$selection" ]]; then
+    return 1
+  fi
+
+  if [[ "$selection" =~ ^[0-9]+$ ]] && [[ "$selection" -ge 1 ]] && [[ "$selection" -le "$count" ]]; then
+    local chosen="${run_dirs[$((selection - 1))]}"
+    _logs_browse_dir "$chosen" "$pager"
+    return 0
+  fi
+
+  echo "  Invalid selection."
+  return 0
+}
+
+_logs_run_label() {
+  local dir="$1"
+  local base
+  base=$(basename "$dir")
+  local parent
+  parent=$(basename "$(dirname "$dir")")
+
+  if [[ "$parent" == "agent-teams" && "$base" == run-* ]]; then
+    echo "$base"
+  elif [[ "$base" == "agent-teams" ]]; then
+    echo "agent-teams (legacy flat)"
+  elif [[ "$base" == "claude-teams" ]]; then
+    echo "claude-teams (legacy)"
+  else
+    echo "$base"
+  fi
+}
+
+_logs_browse_dir() {
+  local dir="$1"
+  local pager="$2"
+
+  while true; do
+    local -a items=()
+    local -a item_paths=()
+
+    # Collect subdirectories (attempt-N, etc.)
+    for sub in "$dir"/*/; do
+      [[ -d "$sub" ]] || continue
+      items+=("$(basename "$sub")/")
+      item_paths+=("$sub")
+    done
+
+    # Collect files
+    for f in "$dir"/*; do
+      [[ -f "$f" ]] || continue
+      items+=("$(basename "$f")")
+      item_paths+=("$f")
+    done
+
+    if [[ ${#items[@]} -eq 0 ]]; then
+      echo "  (empty directory)"
+      return
+    fi
+
+    echo ""
+    echo "--- $(basename "$dir") ---"
+    echo ""
+
+    local idx=1
+    for item in "${items[@]}"; do
+      local path="${item_paths[$((idx - 1))]}"
+      local size_info=""
+      if [[ -f "$path" ]]; then
+        local lines
+        lines=$(wc -l < "$path" | tr -d ' ')
+        size_info="${lines} lines"
+      elif [[ -d "$path" ]]; then
+        local fc
+        fc=$(find "$path" -type f 2>/dev/null | wc -l | tr -d ' ')
+        size_info="${fc} files"
+      fi
+      printf "  %3d) %-40s  (%s)\n" "$idx" "$item" "$size_info"
+      idx=$((idx + 1))
+    done
+
+    echo ""
+    local count=${#items[@]}
+    printf "  Select [1-%d], 'b' to go back, 'q' to quit: " "$count"
+    local sel
+    read -r sel </dev/tty
+
+    if [[ "$sel" == "q" || "$sel" == "Q" ]]; then
+      exit 0
+    fi
+    if [[ "$sel" == "b" || "$sel" == "B" || -z "$sel" ]]; then
+      return
+    fi
+
+    if [[ "$sel" =~ ^[0-9]+$ ]] && [[ "$sel" -ge 1 ]] && [[ "$sel" -le "$count" ]]; then
+      local chosen="${item_paths[$((sel - 1))]}"
+      if [[ -d "$chosen" ]]; then
+        _logs_browse_dir "$chosen" "$pager"
+      elif [[ -f "$chosen" ]]; then
+        echo ""
+        echo "=== $(basename "$chosen") ==="
+        "$pager" "$chosen" </dev/tty
+      fi
+    else
+      echo "  Invalid selection."
+    fi
+  done
+}
+
+cmd_prune() {
+  local state_dir="${RALPH_ROOT}/state"
+
+  if [[ ! -d "$state_dir" ]]; then
+    ralph_log INFO "Nothing to prune — state directory does not exist."
+    return
+  fi
+
+  echo "This will permanently delete all Ralph state:"
+  echo "  - Logs          (state/logs/)"
+  echo "  - Tasks         (state/tasks/)"
+  echo "  - Messages      (state/messages/)"
+  echo "  - Agents        (state/agents/)"
+  echo "  - Prompts       (state/prompts/)"
+  echo ""
+
+  local confirm=""
+  read -r -p "Are you sure? [y/N] " confirm </dev/tty
+  if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+    ralph_log INFO "Prune cancelled."
+    return
+  fi
+
+  rm -rf "$state_dir"
+  mkdir -p "$state_dir"/{tasks,messages,agents,prompts}
+
+  ralph_log INFO "State wiped. Ralph is back to factory fresh."
 }
 
 cmd_settings() {
@@ -972,7 +1306,8 @@ cmd_plan() {
   source "${RALPH_ROOT}/lib/loop-engine.sh"
 
   # Use planning prompt template
-  local plan_prompt="${RALPH_ROOT}/state/.ralph-plan-prompt.md"
+  local plan_prompt="${RALPH_ROOT}/state/prompts/.ralph-plan-prompt.md"
+  mkdir -p "${RALPH_ROOT}/state/prompts"
   local template="${RALPH_ROOT}/templates/prompt-plan.md"
   
   if [[ -f "$template" ]]; then
