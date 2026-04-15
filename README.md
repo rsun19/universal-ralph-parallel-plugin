@@ -69,12 +69,12 @@ It creates your personal `ralph.config.json` (gitignored — not checked in).
 ralph start -p "Build a REST API for todos with CRUD, validation, SQLite, and tests"
 ```
 
-Or omit `-p` and Ralph will ask you interactively:
+Or omit `-p` and Ralph opens your `$EDITOR` so you can write a formatted prompt with lists, headings, and code blocks:
 
 ```bash
 ralph start
-# → "No prompt provided. What should Ralph work on?"
-# → Type your prompt and press Enter
+# → Opens your editor (nano, vim, etc.)
+# → Write your prompt in markdown, save and close
 ```
 
 You can also point `-p` at a file for longer specs:
@@ -165,7 +165,7 @@ Options:
   --allow-all              Skip all permission prompts in the AI tool
 ```
 
-Run `ralph init` first. The `-p` flag accepts either a file path or inline text. If you omit `-p`, Ralph will ask you interactively.
+Run `ralph init` first. The `-p` flag accepts either a file path or inline text. If you omit `-p`, Ralph opens your `$EDITOR` for a full editing experience.
 
 ## Claude Code Agent Teams Integration
 
