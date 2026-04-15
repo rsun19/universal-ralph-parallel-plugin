@@ -221,6 +221,7 @@ session_loop() {
   original_prompt=$(cat "$prompt_file")
 
   local log_base="${ralph_root}/state/logs/agent-teams"
+  rm -rf "$log_base"
   mkdir -p "$log_base"
 
   local attempt=0
