@@ -173,7 +173,7 @@ ${git_diff}"
   fi
 
   if [[ -z "$verdict" ]]; then
-    verdict="COMPLETE"
+    verdict="INCOMPLETE"
   fi
 
   echo "$verdict"
@@ -351,6 +351,16 @@ Please address these specific gaps in addition to the original requirements."
     if [[ -z "$git_diff" ]]; then
       git_diff=$(cd "$target_dir" && git diff 2>/dev/null || true)
     fi
+
+    local untracked=""
+    untracked=$(cd "$target_dir" && git ls-files --others --exclude-standard 2>/dev/null || true)
+    if [[ -n "$untracked" ]]; then
+      git_diff="${git_diff}
+
+--- UNTRACKED FILES ---
+${untracked}"
+    fi
+
     if [[ -z "$git_diff" ]]; then
       git_diff="(no changes detected in working tree)"
     fi
@@ -369,7 +379,7 @@ Please address these specific gaps in addition to the original requirements."
     echo "$verdict" > "${attempt_dir}/verification.log"
     ralph_log INFO "  Verification verdict: $(echo "$verdict" | head -1)"
 
-    if echo "$verdict" | grep -qi "^COMPLETE" 2>/dev/null; then
+    if [[ "$(echo "$verdict" | head -1 | tr -d '[:space:]')" == "COMPLETE" ]]; then
       ralph_log INFO "=== Requirements verified as COMPLETE on attempt ${attempt} ==="
       overall_success=true
       break
