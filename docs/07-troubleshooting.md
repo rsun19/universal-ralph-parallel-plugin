@@ -42,10 +42,10 @@ sudo apt-get install jq
 
 ### Agents seem stuck / no progress
 
-Check status:
+Check sessions:
 
 ```bash
-ralph status
+ralph sessions
 ```
 
 If tasks are `in_progress` but agents are listed as dead, the agent processes crashed. Ralph's manager normally respawns them, but if the manager itself died:
@@ -131,63 +131,70 @@ Ralph needs the AI tool to run without interactive approval prompts. You have tw
 
 Copilot CLI does not support config-file-based permissions, so `--allow-all` is always included in the Copilot adapter by default.
 
+### Cursor sessions hang when running in parallel
+
+Cursor's `agent` CLI is tied to a single IDE backend per window. Ralph automatically opens each worktree in its own Cursor window, but if this doesn't work (e.g., `cursor` CLI not in PATH), the second session will block until the first finishes.
+
+**Fix:** Ensure the `cursor` command is available in your terminal. Run `cursor --version` to check.
+
 ## Inspecting state
+
+### Sessions
+
+```bash
+# List all sessions interactively
+ralph sessions
+
+# Browse a specific session's logs
+ralph sessions --session <id>
+
+# View session metadata
+cat state/sessions/<id>/session.json | jq .
+```
 
 ### Task files
 
 ```bash
-# List all tasks
-ls state/tasks/
+# List tasks for a session
+ls state/sessions/<id>/tasks/
 
 # View a specific task
-cat state/tasks/task-XXXXXXXX.json | jq .
-
-# See all task statuses at once
-for f in state/tasks/task-*.json; do
-  echo "$(jq -r '.status' "$f")  $(jq -r '.title' "$f")"
-done
-```
-
-### Agent registry
-
-```bash
-# See registered agents
-ls state/agents/
-
-# Check a specific agent
-cat state/agents/impl-1-XXXXXXXX.json | jq .
-```
-
-### Iteration logs
-
-```bash
-# List logs for a specific task
-ls state/logs/task-XXXXXXXX-iter-*.log
-
-# Read the first iteration's output
-cat state/logs/task-XXXXXXXX-iter-1.log
-
-# Read the review log
-cat state/logs/task-XXXXXXXX-review.log
+cat state/sessions/<id>/tasks/task-XXXXXXXX.json | jq .
 ```
 
 ### Effective config
 
-If you used CLI overrides, the resolved config is at:
+Each session stores its resolved config:
 
 ```bash
-cat state/.ralph-config-effective.json | jq .
+cat state/sessions/<id>/.ralph-config-effective.json | jq .
+```
+
+### Worktrees
+
+```bash
+# List all Ralph worktrees
+git worktree list | grep ralph
+
+# Navigate to a session's worktree
+cd <repo>-worktrees/ralph-<session_id>
 ```
 
 ## Resetting state
 
-To start fresh without reinstalling:
+To clean up a single session (removes worktree, branch, and state):
 
 ```bash
-rm -rf state/tasks/*.json state/agents/*.json state/messages/*.json state/logs/*
+ralph prune --session <id>
 ```
 
-Or just use `ralph cancel` which cleans up messages and locks but preserves tasks for inspection.
+To wipe everything back to factory fresh:
+
+```bash
+ralph prune
+```
+
+Or use `ralph cancel` to kill agents and clean up locks while preserving state for inspection.
 
 ## Getting help
 

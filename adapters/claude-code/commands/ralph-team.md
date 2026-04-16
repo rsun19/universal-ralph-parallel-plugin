@@ -21,7 +21,7 @@ Read the script output carefully. It tells you the execution mode:
 
 ### If mode is `shell`
 
-The stop hook will keep this session alive. Work through the task from the prompt iteratively. Each time you try to exit, the stop hook feeds the prompt back. Focus on one task at a time from `fix_plan.md`.
+The stop hook will keep this session alive. Work through the task from the prompt iteratively. Each time you try to exit, the stop hook feeds the prompt back. Focus on one task at a time from the task list.
 
 ### If mode is `claude-teams`
 

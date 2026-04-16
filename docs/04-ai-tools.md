@@ -90,6 +90,10 @@ ralph start -p "Build a REST API for todos with CRUD, validation, and tests"
 - `--model` selects the model (sonnet, opus, gpt-4.1, etc.)
 - Ralph's full bash orchestration works: parallel workers, reviewers, retry loops, atomic task claiming
 
+### Parallel sessions
+
+Cursor's `agent` CLI is tied to a single Cursor IDE window. To support parallel `ralph start` sessions, Ralph automatically opens each worktree in its own Cursor window before running the agent command. Each window gets an independent backend, enabling true parallel execution.
+
 ### Permissions
 
 By default, Ralph respects Cursor's permission config. For unattended loops, pre-configure permissions in `~/.cursor/cli-config.json`:

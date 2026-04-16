@@ -49,12 +49,13 @@ Commands:
   init        Set up Ralph (interactive wizard, creates ralph.config.json)
   start       Start a Ralph agent team on a task
   scan        Find git repos on your system, pick one, and start Ralph
-  status      Show current team and task status
-  logs        Browse session logs interactively
+  sessions    List sessions, view status, and browse logs
   cancel      Cancel all running agents and clean up
   plan        Run planning mode only (generate fix_plan.md)
+  agent       Switch AI CLI tool and/or model
+  templates   List or edit prompt templates
   settings    Open ralph.config.json in your editor
-  prune       Wipe all state (logs, tasks, prompts) back to factory
+  prune       Wipe all state (sessions, worktrees, logs) back to factory
 
 Options:
   -c, --config <file>    Config file (default: ralph.config.json)
@@ -91,15 +92,16 @@ Examples:
   # Edit your config
   ralph settings
 
-  # Check status / cancel
-  ralph status
+  # View sessions, status, and logs
+  ralph sessions
+  ralph sessions --session <id>
+
+  # Cancel running agents
   ralph cancel
 
-  # Browse session logs
-  ralph logs
-
-  # Wipe all state back to factory
+  # Wipe all state (or a single session)
   ralph prune
+  ralph prune --session <id>
 EOF
 }
 
@@ -156,11 +158,14 @@ main() {
     settings|config)
       cmd_settings "$config_file"
       return ;;
-    prune)
-      cmd_prune
+    sessions|logs|status)
+      cmd_sessions "${args[@]:-}"
       return ;;
-    logs)
-      cmd_logs
+    templates)
+      cmd_templates "${args[@]:-}"
+      return ;;
+    prune)
+      cmd_prune "${args[@]:-}"
       return ;;
     help|--help|-h)
       usage
@@ -201,14 +206,14 @@ main() {
     scan)
       cmd_scan "$effective_config" "${args[@]:-}"
       ;;
-    status)
-      cmd_status "$effective_config"
-      ;;
     cancel)
       cmd_cancel "$effective_config"
       ;;
     plan)
       cmd_plan "$effective_config" "${args[@]:-}"
+      ;;
+    agent)
+      cmd_agent "$config_file" "${args[@]:-}"
       ;;
     *)
       ralph_log ERROR "Unknown command: $command"
@@ -523,21 +528,71 @@ cmd_start() {
     target_repo="$(cd "$target_repo" 2>/dev/null && pwd)" || ralph_die "Target repo not found: $target_repo"
   fi
 
+  # Ensure user-editable templates are present
+  sync_templates "$RALPH_ROOT"
+
+  # --- Session isolation via worktrees ---
+  source "${RALPH_ROOT}/lib/worktree.sh"
+
+  local session_id
+  session_id=$(printf '%s-%s-%s' "$(date +%s)" "$$" "$RANDOM" | shasum | cut -c1-8)
+  export RALPH_SESSION_ID="$session_id"
+
+  local session_dir="${RALPH_ROOT}/state/sessions/${session_id}"
+  mkdir -p "$session_dir"/{tasks,agents,messages,logs,prompts}
+  export RALPH_SESSION_DIR="$session_dir"
+
+  local original_target_repo="$target_repo"
+
+  local worktree_path
+  worktree_path=$(worktree_create "$target_repo" "$session_id")
+  target_repo="$worktree_path"
+  ralph_log INFO "  Worktree: $worktree_path"
+  ralph_log INFO "  Branch: ralph/$session_id"
+
+  # Cursor's `agent` CLI is tied to a single IDE backend, so parallel
+  # sessions need separate Cursor windows. Open the worktree in its own
+  # window and give it time to initialize before running the agent command.
+  if [[ "$ai_tool" == "cursor" ]]; then
+    ralph_log INFO "  Opening worktree in a new Cursor window..."
+    cursor "$worktree_path" >/dev/null 2>&1 &
+    local cursor_wait=8
+    ralph_log INFO "  Waiting ${cursor_wait}s for Cursor to initialize..."
+    sleep "$cursor_wait"
+  fi
+
+  # Write effective config with overridden target_repo into the session dir
+  local session_config="${session_dir}/.ralph-config-effective.json"
+  jq --arg repo "$target_repo" '.target_repo = $repo' "$config" > "$session_config"
+  config="$session_config"
+
+  # Write session metadata
+  jq -n \
+    --arg sid "$session_id" \
+    --arg orig "$original_target_repo" \
+    --arg wt "$target_repo" \
+    --arg branch "ralph/$session_id" \
+    --arg started "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+    --arg prompt "$prompt_file" \
+    '{
+      session_id: $sid,
+      original_target_repo: $orig,
+      worktree_path: $wt,
+      branch: $branch,
+      started_at: $started,
+      prompt_file: $prompt
+    }' > "${session_dir}/session.json"
+
   ralph_log INFO "Starting Ralph Wiggum agent team"
+  ralph_log INFO "  Session: $session_id"
   ralph_log INFO "  Target repo: $target_repo"
   ralph_log INFO "  AI tool: $ai_tool"
   ralph_log INFO "  Prompt: $prompt_file"
   ralph_log INFO "  Agent Teams (interactive): $agent_teams"
 
-  # Clean previous state
-  rm -rf "${RALPH_ROOT}/state/tasks"/*.json 2>/dev/null || true
-  rm -rf "${RALPH_ROOT}/state/agents"/*.json 2>/dev/null || true
-  rm -rf "${RALPH_ROOT}/state/messages"/*.json 2>/dev/null || true
-  mkdir -p "${RALPH_ROOT}/state"/{tasks,agents,messages,logs,prompts}
-
   if [[ "$agent_teams" == "true" ]]; then
     ralph_log INFO "Starting interactive agent teams session (works with any AI tool)..."
-    ralph_log INFO "  Use 'ralph status' to see per-turn progress."
+    ralph_log INFO "  Use 'ralph sessions' to see per-turn progress."
     exec "${RALPH_ROOT}/bin/ralph-interactive.sh" "$config" "$prompt_file"
   else
     exec "${RALPH_ROOT}/bin/ralph-manager.sh" "$config" "$prompt_file"
@@ -813,6 +868,7 @@ CONFIGEOF
 
   ralph_log INFO "Config saved to: $config_file"
   mkdir -p "${RALPH_ROOT}/state"/{tasks,agents,messages,logs,prompts}
+  sync_templates "$RALPH_ROOT"
 
   echo ""
   ralph_log INFO "Done! Ralph is ready."
@@ -883,165 +939,251 @@ CONFIGEOF
   echo ""
 }
 
-cmd_status() {
-  local config="$1"
+cmd_sessions() {
+  local session_filter=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --session) session_filter="$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+
   require_jq
 
-  local agent_teams
-  agent_teams=$(config_get "$config" '.agent_teams' '')
-  if [[ -z "$agent_teams" ]]; then
-    agent_teams=$(config_get "$config" '.claude_teams.enabled' 'false')
+  local sessions_dir="${RALPH_ROOT}/state/sessions"
+  local pager="${PAGER:-less}"
+  if ! command -v "$pager" >/dev/null 2>&1; then
+    pager="cat"
   fi
 
-  if [[ "$agent_teams" == "true" ]]; then
-    echo "=== Ralph Wiggum Status (Interactive Session Mode) ==="
-    echo ""
-
-    local log_dir="${RALPH_ROOT}/state/logs/agent-teams"
-
-    if [[ ! -d "$log_dir" ]]; then
-      echo "  No session logs found. Run 'ralph start' to begin."
-      return
+  # If a session was specified, go directly to its logs
+  if [[ -n "$session_filter" ]]; then
+    local sdir="${sessions_dir}/${session_filter}"
+    if [[ ! -d "$sdir" ]]; then
+      ralph_die "Session not found: $session_filter"
     fi
-
-    # Find the latest attempt directory
-    local latest_attempt=""
-    for d in "$log_dir"/attempt-*/; do
-      [[ -d "$d" ]] && latest_attempt="$d"
-    done
-
-    if [[ -z "$latest_attempt" ]]; then
-      echo "  No session attempts found. Run 'ralph start' to begin."
-      return
-    fi
-
-    local attempt_num
-    attempt_num=$(basename "$latest_attempt" | sed 's/attempt-//')
-    local max_retries
-    max_retries=$(config_get "$config" '.loop.max_iterations' '3')
-
-    echo "--- Attempt ${attempt_num}/${max_retries} ---"
-    echo ""
-
-    # Count turns
-    local turn_count=0
-    local latest_turn=""
-    for f in "$latest_attempt"/turn-*.log; do
-      [[ -f "$f" ]] || continue
-      turn_count=$((turn_count + 1))
-      latest_turn="$f"
-    done
-
-    local max_turns
-    max_turns=$(config_get "$config" '.turns' '50')
-    echo "  Turns: ${turn_count}/${max_turns}"
-
-    # Check if still running (latest file modified in last 30 seconds)
-    if [[ -n "$latest_turn" ]]; then
-      local now_epoch mod_epoch
-      now_epoch=$(date +%s)
-      if [[ "$(uname)" == "Darwin" ]]; then
-        mod_epoch=$(stat -f %m "$latest_turn")
-      else
-        mod_epoch=$(stat -c %Y "$latest_turn")
-      fi
-      local age=$(( now_epoch - mod_epoch ))
-      if [[ $age -lt 60 ]]; then
-        echo "  Status: RUNNING (last output ${age}s ago)"
-      else
-        echo "  Status: IDLE (last output ${age}s ago)"
-      fi
-    fi
-
-    # Show verification result if it exists
-    local verification="${latest_attempt}/verification.log"
-    if [[ -f "$verification" ]]; then
-      echo ""
-      echo "--- Verification Verdict ---"
-      cat "$verification"
-    fi
-
-    # Show latest manager response
-    local latest_mgr=""
-    for f in "$latest_attempt"/manager-*.log; do
-      [[ -f "$f" ]] && latest_mgr="$f"
-    done
-    if [[ -n "$latest_mgr" ]]; then
-      echo ""
-      echo "--- Last Manager Response ---"
-      cat "$latest_mgr"
-    fi
-
-    # Show last turn output (truncated)
-    if [[ -n "$latest_turn" ]]; then
-      echo ""
-      echo "--- Last Turn Output (last 20 lines) ---"
-      tail -20 "$latest_turn"
-    fi
-
-    echo ""
-    echo "  Logs: $latest_attempt"
+    _sessions_detail "$sdir" "$pager"
     return
   fi
 
-  source "${RALPH_ROOT}/lib/task-manager.sh"
-  source "${RALPH_ROOT}/lib/agent-registry.sh"
+  # Collect sessions
+  local -a sdirs=()
+  if [[ -d "$sessions_dir" ]]; then
+    for d in "$sessions_dir"/*/; do
+      [[ -d "$d" ]] && sdirs+=("$d")
+    done
+  fi
 
-  init_task_dir "$RALPH_ROOT"
-  init_agent_dir "$RALPH_ROOT"
+  if [[ ${#sdirs[@]} -eq 0 ]]; then
+    echo ""
+    echo "  No sessions found. Run 'ralph start' to begin."
+    echo ""
+    local legacy_log="${RALPH_ROOT}/state/logs/agent-teams"
+    if [[ -d "$legacy_log" ]]; then
+      echo "  (Legacy logs found at state/logs/agent-teams/)"
+    fi
+    return
+  fi
 
-  echo "=== Ralph Wiggum Status ==="
+  # Build session list with status info
+  echo ""
+  echo "=== Ralph Sessions ==="
   echo ""
 
-  echo "--- Tasks ---"
-  task_summary | jq '.'
+  local idx=1
+  local -a sids=()
+  for d in "${sdirs[@]}"; do
+    local sid
+    sid=$(basename "$d")
+    sids+=("$sid")
+    local meta="${d}session.json"
+
+    local repo branch status_str
+    if [[ -f "$meta" ]]; then
+      repo=$(jq -r '.original_target_repo // "?"' "$meta" | xargs basename 2>/dev/null || echo "?")
+      branch=$(jq -r '.branch // "?"' "$meta")
+    else
+      repo="?"; branch="?"
+    fi
+
+    # Detect if session is active
+    status_str=$(_sessions_status "$d" "$meta")
+
+    printf "  %2d) %-8s  %-10s  %-25s  %s\n" "$idx" "$sid" "$status_str" "$repo" "$branch"
+    idx=$((idx + 1))
+  done
   echo ""
 
-  echo "--- Agents ---"
-  agent_cleanup
-  local running
-  running=$(agent_list_running | jq 'length')
-  echo "Running agents: $running"
-  agent_list_running | jq -r '.[] | "  [\(.role)] \(.id) - task: \(.current_task // "none")"'
+  # If only one session, show its detail automatically
+  if [[ ${#sdirs[@]} -eq 1 ]]; then
+    _sessions_detail "${sdirs[0]}" "$pager"
+    return
+  fi
+
+  local count=${#sdirs[@]}
+  printf "  Select session [1-%d] (or 'q' to quit): " "$count"
+  local sel
+  read -r sel </dev/tty
+
+  if [[ "$sel" == "q" || "$sel" == "Q" || -z "$sel" ]]; then
+    return
+  fi
+
+  if [[ "$sel" =~ ^[0-9]+$ ]] && [[ "$sel" -ge 1 ]] && [[ "$sel" -le "$count" ]]; then
+    _sessions_detail "${sdirs[$((sel - 1))]}" "$pager"
+  else
+    echo "  Invalid selection."
+  fi
+}
+
+# Print RUNNING/IDLE status for a session directory.
+_sessions_status() {
+  local sdir="$1"
+  local meta="$2"
+
+  if [[ ! -f "$meta" ]]; then
+    echo "IDLE"
+    return
+  fi
+
+  local newest=""
+  newest=$(find "$sdir" -type f -newer "$meta" -print 2>/dev/null | head -1)
+  if [[ -n "$newest" ]]; then
+    local now_epoch mod_epoch age
+    now_epoch=$(date +%s)
+    if [[ "$(uname)" == "Darwin" ]]; then
+      mod_epoch=$(stat -f %m "$newest")
+    else
+      mod_epoch=$(stat -c %Y "$newest")
+    fi
+    age=$(( now_epoch - mod_epoch ))
+    if [[ $age -lt 120 ]]; then
+      echo "RUNNING"
+    else
+      echo "IDLE"
+    fi
+  else
+    echo "IDLE"
+  fi
+}
+
+# Show detail for a session, then offer to browse its logs.
+_sessions_detail() {
+  local sdir="$1"
+  local pager="$2"
+  local sid
+  sid=$(basename "$sdir")
+  local meta="${sdir}/session.json"
+
+  echo ""
+  echo "--- Session: $sid ---"
+
+  if [[ -f "$meta" ]]; then
+    local repo branch started
+    repo=$(jq -r '.original_target_repo // "?"' "$meta")
+    branch=$(jq -r '.branch // "?"' "$meta")
+    started=$(jq -r '.started_at // "?"' "$meta")
+    echo "  Repo:     $(basename "$repo")  ($repo)"
+    echo "  Branch:   $branch"
+    echo "  Started:  $started"
+    echo "  Status:   $(_sessions_status "$sdir" "$meta")"
+  fi
+
+  # Find latest attempt
+  local log_dir="${sdir}/logs/agent-teams"
+  local latest_attempt=""
+
+  # Logs live under agent-teams/<session_id>/attempt-N/
+  if [[ -d "$log_dir" ]]; then
+    for sub in "$log_dir"/*/; do
+      [[ -d "$sub" ]] || continue
+      for d in "$sub"/attempt-*/; do
+        [[ -d "$d" ]] && latest_attempt="$d"
+      done
+    done
+    # Fall back to legacy flat layout
+    if [[ -z "$latest_attempt" ]]; then
+      for d in "$log_dir"/attempt-*/; do
+        [[ -d "$d" ]] && latest_attempt="$d"
+      done
+    fi
+  fi
+
+  if [[ -z "$latest_attempt" ]]; then
+    echo "  No attempts yet."
+    echo ""
+    return
+  fi
+
+  local attempt_num
+  attempt_num=$(basename "$latest_attempt" | sed 's/attempt-//')
+  echo "  Attempt:  $attempt_num"
+
+  local turn_count=0
+  local latest_turn=""
+  for f in "$latest_attempt"/turn-*.log; do
+    [[ -f "$f" ]] || continue
+    turn_count=$((turn_count + 1))
+    latest_turn="$f"
+  done
+  echo "  Turns:    $turn_count"
+
+  local verification="${latest_attempt}/verification.log"
+  if [[ -f "$verification" ]]; then
+    echo ""
+    echo "  --- Verification Verdict ---"
+    cat "$verification"
+  fi
+
+  local latest_mgr=""
+  for f in "$latest_attempt"/manager-*.log; do
+    [[ -f "$f" ]] && latest_mgr="$f"
+  done
+  if [[ -n "$latest_mgr" ]]; then
+    echo ""
+    echo "  --- Last Manager Response ---"
+    cat "$latest_mgr"
+  fi
+
+  if [[ -n "$latest_turn" ]]; then
+    echo ""
+    echo "  --- Last Turn Output (last 20 lines) ---"
+    tail -20 "$latest_turn"
+  fi
+
   echo ""
 
-  echo "--- Task Details ---"
-  task_list "all" | jq -r '.[] | "  [\(.status)] \(.id): \(.title) (attempt \(.attempt_count)/\(.max_retries))"'
+  # Offer to browse logs
+  local session_logs="${log_dir}/${sid}"
+  if [[ -d "$session_logs" ]]; then
+    printf "  Browse logs? [Y/n]: "
+    local browse
+    read -r browse </dev/tty
+    if [[ "$browse" != "n" && "$browse" != "N" ]]; then
+      while true; do
+        _logs_browse_dir "$session_logs" "$pager" || break
+      done
+    fi
+  fi
 }
 
 cmd_cancel() {
   local config="$1"
 
   source "${RALPH_ROOT}/lib/agent-registry.sh"
+
+  local _state_dir="${RALPH_SESSION_DIR:-${RALPH_ROOT}/state}"
   init_agent_dir "$RALPH_ROOT"
 
   ralph_log INFO "Cancelling all Ralph agents..."
   agent_kill_all
   
   # Clean up state
-  rm -f "${RALPH_ROOT}/state/tasks"/*.lock 2>/dev/null || true
-  rm -f "${RALPH_ROOT}/state/messages"/*.json 2>/dev/null || true
+  rm -f "${_state_dir}/tasks"/*.lock 2>/dev/null || true
+  rm -f "${_state_dir}/messages"/*.json 2>/dev/null || true
 
   ralph_log INFO "All agents cancelled. Task state preserved for inspection."
-  ralph_log INFO "Run 'ralph status' to see final task states."
-}
-
-cmd_logs() {
-  local logs_root="${RALPH_ROOT}/state/logs"
-
-  if [[ ! -d "$logs_root" ]]; then
-    ralph_log INFO "No logs found. Run 'ralph start' to generate session logs."
-    return
-  fi
-
-  local pager="${PAGER:-less}"
-  if ! command -v "$pager" >/dev/null 2>&1; then
-    pager="cat"
-  fi
-
-  while true; do
-    _logs_browse_runs "$logs_root" "$pager" || break
-  done
+  ralph_log INFO "Run 'ralph sessions' to see final task states."
 }
 
 _logs_browse_runs() {
@@ -1224,6 +1366,30 @@ _logs_browse_dir() {
 }
 
 cmd_prune() {
+  local session_filter=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --session) session_filter="$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+
+  source "${RALPH_ROOT}/lib/worktree.sh"
+
+  local sessions_dir="${RALPH_ROOT}/state/sessions"
+
+  if [[ -n "$session_filter" ]]; then
+    # Prune a single session
+    local sdir="${sessions_dir}/${session_filter}"
+    if [[ ! -d "$sdir" ]]; then
+      ralph_die "Session not found: $session_filter"
+    fi
+
+    _prune_session "$sdir"
+    ralph_log INFO "Session $session_filter pruned."
+    return
+  fi
+
   local state_dir="${RALPH_ROOT}/state"
 
   if [[ ! -d "$state_dir" ]]; then
@@ -1231,12 +1397,23 @@ cmd_prune() {
     return
   fi
 
+  # Count sessions
+  local session_count=0
+  if [[ -d "$sessions_dir" ]]; then
+    for d in "$sessions_dir"/*/; do
+      [[ -d "$d" ]] && session_count=$((session_count + 1))
+    done
+  fi
+
   echo "This will permanently delete all Ralph state:"
+  echo "  - Sessions      ($session_count session(s) with worktrees)"
   echo "  - Logs          (state/logs/)"
   echo "  - Tasks         (state/tasks/)"
   echo "  - Messages      (state/messages/)"
   echo "  - Agents        (state/agents/)"
   echo "  - Prompts       (state/prompts/)"
+  echo ""
+  echo "  Tip: prune a single session with 'ralph prune --session <id>'"
   echo ""
 
   local confirm=""
@@ -1246,10 +1423,290 @@ cmd_prune() {
     return
   fi
 
+  # Remove worktrees for all sessions
+  if [[ -d "$sessions_dir" ]]; then
+    for sdir in "$sessions_dir"/*/; do
+      [[ -d "$sdir" ]] || continue
+      _prune_session "$sdir"
+    done
+  fi
+
   rm -rf "$state_dir"
   mkdir -p "$state_dir"/{tasks,messages,agents,prompts}
 
   ralph_log INFO "State wiped. Ralph is back to factory fresh."
+}
+
+_prune_session() {
+  local sdir="$1"
+  local sid
+  sid=$(basename "$sdir")
+
+  if [[ -f "${sdir}/session.json" ]]; then
+    local orig_repo wt_path
+    orig_repo=$(jq -r '.original_target_repo // empty' "${sdir}/session.json")
+    wt_path=$(jq -r '.worktree_path // empty' "${sdir}/session.json")
+
+    if [[ -n "$orig_repo" ]] && [[ -n "$wt_path" ]]; then
+      ralph_log INFO "  Removing worktree: $wt_path"
+      worktree_remove "$orig_repo" "$wt_path"
+    fi
+  fi
+
+  rm -rf "$sdir"
+  ralph_log INFO "  Removed session state: $sid"
+}
+
+cmd_templates() {
+  local template_dir="${RALPH_ROOT}/state/templates"
+  local defaults_dir="${RALPH_ROOT}/templates"
+
+  # Ensure user copies exist
+  sync_templates "$RALPH_ROOT"
+
+  local arg="${1:-}"
+
+  # Handle --reset
+  if [[ "$arg" == "--reset" ]]; then
+    echo "This will overwrite all customized templates with the defaults."
+    printf "Are you sure? [y/N] "
+    local confirm
+    read -r confirm </dev/tty
+    if [[ "$confirm" == "y" || "$confirm" == "Y" ]]; then
+      reset_templates "$RALPH_ROOT"
+      ralph_log INFO "All templates reset to defaults."
+    else
+      ralph_log INFO "Reset cancelled."
+    fi
+    return
+  fi
+
+  # Handle editing a specific template
+  if [[ -n "$arg" ]]; then
+    local target="${template_dir}/${arg}"
+    if [[ ! -f "$target" ]]; then
+      target="${template_dir}/${arg}.md"
+    fi
+    if [[ ! -f "$target" ]]; then
+      ralph_die "Template not found: $arg (run 'ralph templates' to list all)"
+    fi
+
+    local editor="${EDITOR:-${VISUAL:-}}"
+    if [[ -z "$editor" ]]; then
+      command -v nano >/dev/null 2>&1 && editor="nano" || editor="vi"
+    fi
+    "$editor" "$target"
+    return
+  fi
+
+  # List all templates
+  echo ""
+  echo "=== Ralph Prompt Templates ==="
+  echo ""
+  echo "  Editable copies in: ${template_dir}/"
+  echo "  Defaults in:        ${defaults_dir}/"
+  echo ""
+
+  local idx=1
+  for f in "$template_dir"/prompt-*.md; do
+    [[ -f "$f" ]] || continue
+    local name
+    name=$(basename "$f")
+    local desc=""
+    case "$name" in
+      prompt-team.md)              desc="Team orchestration prompt (agent teams mode)" ;;
+      prompt-plan.md)              desc="Planning / task breakdown prompt" ;;
+      prompt-implement.md)         desc="Implementer agent prompt" ;;
+      prompt-review.md)            desc="Reviewer agent prompt" ;;
+      prompt-manager.md)           desc="Manager agent prompt (multi-worker mode)" ;;
+      prompt-manager-respond.md)   desc="Manager turn-by-turn response prompt" ;;
+      prompt-verify.md)            desc="Completion verification prompt" ;;
+      *)                           desc="" ;;
+    esac
+
+    # Show if user has modified the template
+    local modified=""
+    if [[ -f "${defaults_dir}/${name}" ]] && ! diff -q "${defaults_dir}/${name}" "$f" >/dev/null 2>&1; then
+      modified=" (customized)"
+    fi
+
+    printf "  %2d) %-30s  %s%s\n" "$idx" "$name" "$desc" "$modified"
+    idx=$((idx + 1))
+  done
+
+  echo ""
+  echo "  Edit a template:    ralph templates prompt-team.md"
+  echo "  Reset to defaults:  ralph templates --reset"
+  echo ""
+}
+
+cmd_agent() {
+  local config_file="$1"; shift
+  local subcmd="${1:-switch}"
+
+  if [[ "$subcmd" != "switch" ]]; then
+    ralph_die "Unknown subcommand: ralph agent $subcmd (available: switch)"
+  fi
+
+  require_jq
+
+  local current_tool current_model current_mgr_model
+  current_tool=$(config_get "$config_file" '.ai_tool' 'claude-code')
+  current_model=$(config_get "$config_file" '.model' 'sonnet')
+  current_mgr_model=$(config_get "$config_file" '.manager_model' 'sonnet')
+
+  echo ""
+  echo "=== Switch AI Agent ==="
+  echo ""
+  echo "  Current CLI:            $current_tool"
+  echo "  Current model:          $current_model"
+  echo "  Current manager model:  $current_mgr_model"
+  echo ""
+
+  echo "  Which AI tool will you use?"
+  echo ""
+  echo "    1) claude-code   (best supported, native Agent Teams)"
+  echo "    2) cursor         (Cursor CLI — agent)"
+  echo "    3) copilot        (GitHub Copilot CLI — copilot)"
+  echo "    4) generic        (any CLI tool)"
+  echo ""
+  printf "  Choice [current: %s]: " "$current_tool"
+  read -r tool_choice </dev/tty
+  local ai_tool
+  case "${tool_choice}" in
+    1) ai_tool="claude-code" ;;
+    2) ai_tool="cursor" ;;
+    3) ai_tool="copilot" ;;
+    4) ai_tool="generic" ;;
+    "") ai_tool="$current_tool" ;;
+    *) ai_tool="$current_tool" ;;
+  esac
+  echo ""
+
+  local model="$current_model"
+  local mgr_model="$current_mgr_model"
+
+  if [[ "$ai_tool" != "$current_tool" ]]; then
+    echo "  Switched CLI to: $ai_tool"
+    echo ""
+  else
+    echo "  Keeping CLI: $ai_tool"
+    echo ""
+  fi
+
+  printf "  Switch models too? [y/N]: "
+  read -r switch_models </dev/tty
+  echo ""
+
+  if [[ "$switch_models" == "y" || "$switch_models" == "Y" ]]; then
+    echo "  Which model?"
+    echo ""
+    if [[ "$ai_tool" == "claude-code" ]]; then
+      echo "    1) sonnet        (Claude Sonnet - fast, affordable)"
+      echo "    2) opus          (Claude Opus - smartest, expensive)"
+      echo "    3) haiku         (Claude Haiku - fastest, cheapest)"
+      echo "    4) gpt-4.1       (OpenAI GPT-4.1)"
+      echo "    5) gpt-4.1-mini  (OpenAI GPT-4.1 Mini)"
+      echo "    6) o3            (OpenAI o3)"
+      echo "    7) gemini-2.5    (Google Gemini 2.5 Pro)"
+      echo "    8) Custom        (type your own)"
+    else
+      echo "    1) sonnet        (Claude Sonnet)"
+      echo "    2) opus          (Claude Opus)"
+      echo "    3) gpt-4.1       (OpenAI GPT-4.1)"
+      echo "    4) gpt-4.1-mini  (OpenAI GPT-4.1 Mini)"
+      echo "    5) o3            (OpenAI o3)"
+      echo "    6) gemini-2.5    (Google Gemini 2.5 Pro)"
+      echo "    7) Custom        (type your own)"
+    fi
+    echo ""
+    printf "  Worker model [current: %s]: " "$current_model"
+    read -r model_choice </dev/tty
+    if [[ "$ai_tool" == "claude-code" ]]; then
+      case "${model_choice}" in
+        1) model="sonnet" ;;
+        2) model="opus" ;;
+        3) model="haiku" ;;
+        4) model="gpt-4.1" ;;
+        5) model="gpt-4.1-mini" ;;
+        6) model="o3" ;;
+        7) model="gemini-2.5-pro" ;;
+        8)
+          printf "\n  Model name: "
+          read -r model </dev/tty
+          [[ -z "$model" ]] && model="$current_model"
+          ;;
+        "") model="$current_model" ;;
+        *) model="$current_model" ;;
+      esac
+    else
+      case "${model_choice}" in
+        1) model="sonnet" ;;
+        2) model="opus" ;;
+        3) model="gpt-4.1" ;;
+        4) model="gpt-4.1-mini" ;;
+        5) model="o3" ;;
+        6) model="gemini-2.5-pro" ;;
+        7)
+          printf "\n  Model name: "
+          read -r model </dev/tty
+          [[ -z "$model" ]] && model="$current_model"
+          ;;
+        "") model="$current_model" ;;
+        *) model="$current_model" ;;
+      esac
+    fi
+    echo ""
+
+    printf "  Manager model [current: %s, enter = same as worker]: " "$current_mgr_model"
+    read -r mgr_choice </dev/tty
+    if [[ -z "$mgr_choice" ]]; then
+      mgr_model="$model"
+    else
+      mgr_model="$mgr_choice"
+    fi
+    echo ""
+  fi
+
+  # Build ai_tool_command
+  local ai_tool_command
+  case "$ai_tool" in
+    claude-code) ai_tool_command="claude --model ${model} -p" ;;
+    cursor)      ai_tool_command="agent --model ${model} -p" ;;
+    copilot)     ai_tool_command="copilot --allow-all --model ${model} -p" ;;
+    generic)
+      printf "  Enter the command to invoke your AI tool: "
+      read -r ai_tool_command </dev/tty
+      [[ -z "$ai_tool_command" ]] && ralph_die "AI command is required for generic tools."
+      ;;
+  esac
+
+  # Handle allow_all for copilot
+  local allow_all
+  allow_all=$(config_get "$config_file" '.allow_all' 'false')
+  if [[ "$ai_tool" == "copilot" ]]; then
+    allow_all="true"
+  fi
+
+  # Update config
+  local tmp="${config_file}.tmp.$$"
+  jq \
+    --arg tool "$ai_tool" \
+    --arg cmd "$ai_tool_command" \
+    --arg m "$model" \
+    --arg mm "$mgr_model" \
+    --argjson aa "$allow_all" \
+    '.ai_tool = $tool | .ai_tool_command = $cmd | .model = $m | .manager_model = $mm | .allow_all = $aa' \
+    "$config_file" > "$tmp" && mv "$tmp" "$config_file"
+
+  echo "  Updated ralph.config.json:"
+  echo ""
+  echo "    ai_tool:          $ai_tool"
+  echo "    ai_tool_command:  $ai_tool_command"
+  echo "    model:            $model"
+  echo "    manager_model:    $mgr_model"
+  echo ""
+  ralph_log INFO "Agent switch complete. Changes take effect on the next 'ralph start'."
 }
 
 cmd_settings() {
@@ -1308,10 +1765,13 @@ cmd_plan() {
   # Use planning prompt template
   local plan_prompt="${RALPH_ROOT}/state/prompts/.ralph-plan-prompt.md"
   mkdir -p "${RALPH_ROOT}/state/prompts"
-  local template="${RALPH_ROOT}/templates/prompt-plan.md"
+  sync_templates "$RALPH_ROOT"
+  local template="${RALPH_ROOT}/state/templates/prompt-plan.md"
   
   if [[ -f "$template" ]]; then
-    sed "s|{{PROMPT_FILE}}|${prompt_file}|g; s|{{TARGET_REPO}}|${target_repo}|g" "$template" > "$plan_prompt"
+    render_template "$template" \
+      PROMPT_FILE "$prompt_file" \
+      TARGET_REPO "$target_repo" > "$plan_prompt"
   else
     cp "$prompt_file" "$plan_prompt"
   fi

@@ -149,10 +149,13 @@ Commands:
   init        Set up Ralph (interactive wizard, creates ralph.config.json)
   start       Start a Ralph agent team on a task
   scan        Find git repos on your system, pick one, and start Ralph
-  status      Show current team and task status
+  sessions    List sessions, view status, and browse logs
   cancel      Cancel all running agents and clean up
-  plan        Run planning mode only (generate fix_plan.md)
+  plan        Run planning mode only (generate a task breakdown)
+  agent       Switch AI CLI tool and/or model
+  templates   List or edit prompt templates
   settings    Open ralph.config.json in your editor
+  prune       Clean up sessions, worktrees, and state
 
 Options:
   -c, --config <file>     Config file (default: ralph.config.json)
@@ -168,6 +171,59 @@ Options:
 ```
 
 Run `ralph init` first. The `-p` flag accepts either a file path or inline text. If you omit `-p`, Ralph opens your `$EDITOR` for a full editing experience.
+
+### Session Management
+
+Every `ralph start` creates an isolated **git worktree** on a new branch. This means you can run multiple sessions in parallel without code collisions:
+
+```bash
+# Terminal 1
+ralph start -p "Build auth module"
+
+# Terminal 2 (runs in its own worktree and branch)
+ralph start -p "Build payment integration"
+```
+
+When a session completes, Ralph shows you the exact commands to merge or push:
+
+```bash
+# View sessions and their status
+ralph sessions
+
+# Browse a specific session's logs
+ralph sessions --session <id>
+
+# Clean up a finished session (removes worktree + branch + state)
+ralph prune --session <id>
+
+# Clean up everything
+ralph prune
+```
+
+`ralph status` and `ralph logs` are aliases for `ralph sessions`.
+
+### Switching Tools and Models
+
+```bash
+ralph agent switch
+```
+
+Interactive wizard to change your AI CLI tool and/or model. Updates `ralph.config.json` automatically.
+
+### Customizing Prompt Templates
+
+Ralph uses prompt templates to instruct implementers, reviewers, and managers. Editable copies live in `state/templates/`:
+
+```bash
+# List all templates (shows which ones you've customized)
+ralph templates
+
+# Edit a template
+ralph templates prompt-implement.md
+
+# Reset all templates to defaults
+ralph templates --reset
+```
 
 ## Agent Teams (Interactive Session Mode)
 
@@ -215,10 +271,11 @@ Attempt 2:
 ```
 User
  └── ralph CLI
-      └── Manager Agent (outer loop)
-           ├── Phase 1: Planning
-           │    └── AI generates task breakdown → fix_plan.md
-           ├── Phase 2: Implementation
+      └── Creates worktree + branch (ralph/<session_id>)
+           └── Manager Agent (outer loop)
+                ├── Phase 1: Planning
+                │    └── AI generates task breakdown
+                ├── Phase 2: Implementation
            │    ├── Worker 1 (inner loop) ─── claims tasks → implements → reports
            │    ├── Worker 2 (inner loop) ─── claims tasks → implements → reports
            │    └── Worker N (inner loop) ─── claims tasks → implements → reports
@@ -257,15 +314,22 @@ pending → in_progress → completed → review → approved
                   (with feedback, up to max_retries)
 ```
 
+### Worktree Isolation
+
+Every `ralph start` creates a git worktree at `<repo>-worktrees/ralph-<session_id>` on branch `ralph/<session_id>`. This means:
+- Multiple sessions can run in parallel on different features
+- No session can interfere with another's code changes
+- Your main branch stays clean until you explicitly merge
+- For Cursor users, each worktree opens in its own Cursor window automatically
+
 ### File-Based Coordination
 
 All coordination uses the filesystem (no network dependencies):
-- **Tasks**: `state/tasks/*.json` - individual task files with `flock` locking
-- **Messages**: `state/messages/*.json` - inter-agent mailbox
-- **Agents**: `state/agents/*.json` - agent registry with heartbeats
+- **Sessions**: `state/sessions/<id>/` - per-session state (tasks, logs, config)
+- **Tasks**: `state/sessions/<id>/tasks/*.json` - task files with `flock` locking
+- **Templates**: `state/templates/` - editable prompt templates
 - **Prompts**: `state/prompts/` - generated prompt files
-- **Logs**: `state/logs/` - iteration output logs
-- **Session logs**: `state/logs/agent-teams/attempt-N/` - per-turn + verification logs
+- **Logs**: `state/sessions/<id>/logs/agent-teams/<id>/attempt-N/` - per-turn logs
 
 ## Prompt Writing Best Practices
 

@@ -276,4 +276,24 @@ When `true`, Ralph runs a multi-turn interactive session where the AI spawns par
 | `--agent-teams` | `agent_teams` | `--agent-teams` |
 | `--allow-all` | `allow_all` | `--allow-all` |
 
-CLI flags override config file values. The effective config is written to `state/.ralph-config-effective.json` so you can inspect what was actually used.
+CLI flags override config file values. The effective config is written to the session directory so you can inspect what was actually used.
+
+## Switching tools and models
+
+You can change your AI tool and model without editing the config file manually:
+
+```bash
+ralph agent switch
+```
+
+This walks you through selecting a new CLI tool (claude-code, cursor, copilot, generic) and optionally a new model, then updates `ralph.config.json` automatically.
+
+## Prompt templates
+
+Ralph uses prompt templates to instruct agents. Editable copies are stored in `state/templates/` and defaults live in `templates/`. Missing templates are auto-copied on `ralph init` and `ralph start`.
+
+```bash
+ralph templates              # List all templates
+ralph templates prompt-implement.md  # Edit a template
+ralph templates --reset      # Reset all to defaults
+```
