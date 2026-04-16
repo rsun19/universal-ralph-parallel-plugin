@@ -180,6 +180,24 @@ ralph cancel
 
 This kills all agent processes but preserves the task state so you can inspect what happened.
 
+## Per-session overrides
+
+You can override the target repo, AI tool, or model for a single session without changing your config:
+
+```bash
+# Different repo for this session (or --repo to scan interactively)
+ralph start --repo /path/to/other-project -p "Add dark mode"
+
+# Different AI tool for this session (auto-prompts for model)
+ralph start --cli claude-code -p "Refactor auth module"
+
+# Different model for this session (or --model to pick interactively)
+ralph start --model opus -p "Complex refactor"
+
+# Combine all three
+ralph start --repo /path/to/project --cli claude-code --model opus
+```
+
 ## Parallel sessions
 
 Every `ralph start` creates its own isolated worktree and branch, so you can run multiple sessions simultaneously:
@@ -189,10 +207,13 @@ Every `ralph start` creates its own isolated worktree and branch, so you can run
 ralph start -p "Build the auth module"
 
 # Terminal 2 (separate worktree, separate branch)
-ralph start -p "Build the payment integration"
+ralph start --repo /path/to/other-project -p "Build the payment integration"
+
+# Terminal 3 (different tool and model)
+ralph start --cli claude-code --model opus -p "Write integration tests"
 ```
 
-> **Note:** Cursor users get each worktree opened in its own Cursor window automatically. Claude Code and Copilot support full parallelism natively.
+> **Note:** Cursor's `agent` CLI does not support parallel sessions. Use `--cli claude-code` for additional sessions if your default is Cursor. Claude Code and Copilot support full parallelism natively.
 
 ## Finding repos (scan)
 

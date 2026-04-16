@@ -59,8 +59,10 @@ Commands:
 
 Options:
   -c, --config <file>    Config file (default: ralph.config.json)
-  -r, --repo <path>      Target repository path (overrides config)
-  -t, --tool <name>      AI tool: claude-code, cursor, copilot, generic
+  -r, --repo [path]      Target repo for this session (interactive scanner if no path given)
+  --cli [tool]           AI tool for this session only (picker if no tool given)
+  --model <name>         Model for this session only (e.g. sonnet, opus, gpt-4.1)
+  -t, --tool <name>      AI tool: claude-code, cursor, copilot, generic (updates config)
   -p, --prompt <text|file> Prompt: inline text OR path to a .md file
   -n, --implementers <n> Number of implementer agents (default: 3)
   -R, --reviewers <n>    Number of reviewer agents (default: 2)
@@ -126,9 +128,28 @@ main() {
       -c|--config)
         config_file="$2"; shift 2 ;;
       -r|--repo)
-        config_overrides+=("target_repo=$2"); shift 2 ;;
+        if [[ -n "${2:-}" && "${2:0:1}" != "-" ]]; then
+          config_overrides+=("session_target_repo=$2"); shift 2
+        else
+          config_overrides+=("session_target_repo=__SCAN__"); shift
+        fi
+        ;;
       -t|--tool)
         config_overrides+=("ai_tool=$2"); shift 2 ;;
+      --cli)
+        if [[ -n "${2:-}" && "${2:0:1}" != "-" ]]; then
+          config_overrides+=("session_cli=$2"); shift 2
+        else
+          config_overrides+=("session_cli=__PICK__"); shift
+        fi
+        ;;
+      --model)
+        if [[ -n "${2:-}" && "${2:0:1}" != "-" ]]; then
+          config_overrides+=("session_model=$2"); shift 2
+        else
+          config_overrides+=("session_model=__PICK__"); shift
+        fi
+        ;;
       -p|--prompt)
         config_overrides+=("prompt_input=$2"); shift 2 ;;
       -n|--implementers)
@@ -367,13 +388,13 @@ cmd_scan() {
       local scan_config="${RALPH_ROOT}/state/.ralph-config-scan.json"
       mkdir -p "$(dirname "$scan_config")"
       jq --arg repo "$chosen_repo" --arg pf "$prompt_file" \
-        '.target_repo = $repo | .prompt_file = $pf' "$config" > "$scan_config"
+        '.default_target_repo = $repo | .prompt_file = $pf' "$config" > "$scan_config"
       cmd_start "$scan_config" "$prompt_file"
       ;;
     2)
-      jq --arg repo "$chosen_repo" '.target_repo = $repo' "$config" > "${config}.tmp"
+      jq --arg repo "$chosen_repo" '.default_target_repo = $repo' "$config" > "${config}.tmp"
       mv "${config}.tmp" "$config"
-      ralph_log INFO "Target repo set to: $chosen_repo"
+      ralph_log INFO "Default target repo set to: $chosen_repo"
       ralph_log INFO "Next: ralph start -p \"your prompt\""
       ;;
     *)
@@ -515,8 +536,71 @@ cmd_start() {
     ralph_die "Prompt required. Use -p \"your prompt\" or -p file.md"
 
   local target_repo ai_tool agent_teams
-  target_repo=$(config_get "$config" '.target_repo' '.')
+
+  # Determine target repo: --repo flag > config default
+  local session_target_repo
+  session_target_repo=$(config_get "$config" '.session_target_repo' '')
+  if [[ "$session_target_repo" == "__SCAN__" ]]; then
+    session_target_repo=$(scan_for_repo) || ralph_die "No repository selected."
+    ralph_log INFO "Selected: $session_target_repo"
+  fi
+
+  if [[ -n "$session_target_repo" ]]; then
+    target_repo="$session_target_repo"
+  else
+    target_repo=$(config_get "$config" '.default_target_repo' '')
+    # Backward compat: fall back to legacy "target_repo" key
+    if [[ -z "$target_repo" ]]; then
+      target_repo=$(config_get "$config" '.target_repo' '.')
+    fi
+  fi
+
   ai_tool=$(config_get "$config" '.ai_tool' 'claude-code')
+
+  # Per-session overrides via --cli and --model
+  local session_cli session_tool_command="" session_model
+  session_cli=$(config_get "$config" '.session_cli' '')
+  session_model=$(config_get "$config" '.session_model' '')
+
+  if [[ "$session_cli" == "__PICK__" ]]; then
+    session_cli=$(_pick_ai_tool "$ai_tool")
+    echo ""
+  fi
+
+  local model
+  model=$(config_get "$config" '.model' 'sonnet')
+
+  if [[ -n "$session_cli" ]]; then
+    ai_tool="$session_cli"
+    # CLI changed — prompt for model if not explicitly given via --model
+    if [[ -z "$session_model" ]]; then
+      ralph_log INFO "  CLI switched to: $ai_tool — select a model for this session"
+      session_model=$(_pick_model "$ai_tool" "$model")
+      echo ""
+    fi
+  fi
+
+  if [[ "$session_model" == "__PICK__" ]]; then
+    session_model=$(_pick_model "$ai_tool" "$model")
+    echo ""
+  fi
+
+  if [[ -n "$session_model" ]]; then
+    model="$session_model"
+  fi
+
+  # Prompt for manager model when --cli or --model overrides are active
+  local session_mgr_model=""
+  if [[ -n "$session_cli" || -n "$session_model" ]]; then
+    local current_mgr
+    current_mgr=$(config_get "$config" '.manager_model' "$model")
+    printf "  Manager model [current: %s, enter = same as worker (%s)]: " "$current_mgr" "$model"
+    read -r session_mgr_model </dev/tty
+    session_mgr_model="${session_mgr_model:-$model}"
+    echo ""
+    session_tool_command=$(_build_tool_command "$ai_tool" "$model")
+  fi
+
   # Support both new "agent_teams" key and legacy "claude_teams.enabled"
   agent_teams=$(config_get "$config" '.agent_teams' '')
   if [[ -z "$agent_teams" ]]; then
@@ -550,9 +634,6 @@ cmd_start() {
   ralph_log INFO "  Worktree: $worktree_path"
   ralph_log INFO "  Branch: ralph/$session_id"
 
-  # Cursor's `agent` CLI is tied to a single IDE backend, so parallel
-  # sessions need separate Cursor windows. Open the worktree in its own
-  # window and give it time to initialize before running the agent command.
   if [[ "$ai_tool" == "cursor" ]]; then
     ralph_log INFO "  Opening worktree in a new Cursor window..."
     cursor "$worktree_path" >/dev/null 2>&1 &
@@ -561,9 +642,24 @@ cmd_start() {
     sleep "$cursor_wait"
   fi
 
-  # Write effective config with overridden target_repo into the session dir
+  # Write effective config — downstream code reads .target_repo
   local session_config="${session_dir}/.ralph-config-effective.json"
-  jq --arg repo "$target_repo" '.target_repo = $repo' "$config" > "$session_config"
+  local _clean='del(.session_target_repo) | del(.session_cli) | del(.session_model)'
+  local _mgr_update=""
+  if [[ -n "$session_mgr_model" ]]; then
+    _mgr_update=' | .manager_model = $mm'
+  fi
+  if [[ -n "$session_tool_command" ]]; then
+    jq --arg repo "$target_repo" --arg tool "$ai_tool" --arg cmd "$session_tool_command" --arg m "$model" --arg mm "$session_mgr_model" \
+      ".target_repo = \$repo | .ai_tool = \$tool | .ai_tool_command = \$cmd | .model = \$m${_mgr_update} | ${_clean}" \
+      "$config" > "$session_config"
+  elif [[ -n "$session_model" ]]; then
+    jq --arg repo "$target_repo" --arg m "$model" --arg mm "$session_mgr_model" \
+      ".target_repo = \$repo | .model = \$m${_mgr_update} | ${_clean}" \
+      "$config" > "$session_config"
+  else
+    jq --arg repo "$target_repo" ".target_repo = \$repo | ${_clean}" "$config" > "$session_config"
+  fi
   config="$session_config"
 
   # Write session metadata
@@ -574,13 +670,15 @@ cmd_start() {
     --arg branch "ralph/$session_id" \
     --arg started "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
     --arg prompt "$prompt_file" \
+    --arg tool "$ai_tool" \
     '{
       session_id: $sid,
       original_target_repo: $orig,
       worktree_path: $wt,
       branch: $branch,
       started_at: $started,
-      prompt_file: $prompt
+      prompt_file: $prompt,
+      ai_tool: $tool
     }' > "${session_dir}/session.json"
 
   ralph_log INFO "Starting Ralph Wiggum agent team"
@@ -834,7 +932,7 @@ cmd_init() {
   cat > "$config_file" << CONFIGEOF
 {
   "version": "1.0.0",
-  "target_repo": $(printf '%s' "$target_dir" | jq -Rs .),
+  "default_target_repo": $(printf '%s' "$target_dir" | jq -Rs .),
   "prompt_text": "",
   "ai_tool": $(printf '%s' "$ai_tool" | jq -Rs .),
   "ai_tool_command": $(printf '%s' "$ai_tool_command" | jq -Rs .),
@@ -1540,6 +1638,96 @@ cmd_templates() {
   echo ""
 }
 
+# Interactive AI tool picker. Prints the chosen tool name to stdout.
+# Args: [current_tool] — shown as default; if empty, defaults to claude-code.
+_pick_ai_tool() {
+  local current="${1:-claude-code}"
+  echo "" >&2
+  echo "  Which AI tool will you use?" >&2
+  echo "" >&2
+  echo "    1) claude-code   (best supported, native Agent Teams)" >&2
+  echo "    2) cursor         (Cursor CLI — agent)" >&2
+  echo "    3) copilot        (GitHub Copilot CLI — copilot)" >&2
+  echo "    4) generic        (any CLI tool)" >&2
+  echo "" >&2
+  printf "  Choice [current: %s]: " "$current" >&2
+  local choice
+  read -r choice </dev/tty
+  case "${choice}" in
+    1) echo "claude-code" ;;
+    2) echo "cursor" ;;
+    3) echo "copilot" ;;
+    4) echo "generic" ;;
+    *) echo "$current" ;;
+  esac
+}
+
+# Build ai_tool_command from tool + model.
+# Args: ai_tool model
+_build_tool_command() {
+  local tool="$1" model="$2"
+  case "$tool" in
+    claude-code) echo "claude --model ${model} -p" ;;
+    cursor)      echo "agent --model ${model} -p" ;;
+    copilot)     echo "copilot --allow-all --model ${model} -p" ;;
+    generic)
+      printf "  Enter the command to invoke your AI tool: " >&2
+      local cmd
+      read -r cmd </dev/tty
+      [[ -z "$cmd" ]] && ralph_die "AI command is required for generic tools."
+      echo "$cmd"
+      ;;
+  esac
+}
+
+# Interactive model picker. Prints the chosen model name to stdout.
+# Args: ai_tool current_model
+_pick_model() {
+  local ai_tool="${1:-claude-code}" current="${2:-sonnet}"
+  echo "" >&2
+  echo "  Which model?" >&2
+  echo "" >&2
+  if [[ "$ai_tool" == "claude-code" ]]; then
+    echo "    1) sonnet        (Claude Sonnet - fast, affordable)" >&2
+    echo "    2) opus          (Claude Opus - smartest, expensive)" >&2
+    echo "    3) haiku         (Claude Haiku - fastest, cheapest)" >&2
+    echo "    4) gpt-4.1       (OpenAI GPT-4.1)" >&2
+    echo "    5) gpt-4.1-mini  (OpenAI GPT-4.1 Mini)" >&2
+    echo "    6) o3            (OpenAI o3)" >&2
+    echo "    7) gemini-2.5    (Google Gemini 2.5 Pro)" >&2
+    echo "    8) Custom        (type your own)" >&2
+  else
+    echo "    1) sonnet        (Claude Sonnet)" >&2
+    echo "    2) opus          (Claude Opus)" >&2
+    echo "    3) gpt-4.1       (OpenAI GPT-4.1)" >&2
+    echo "    4) gpt-4.1-mini  (OpenAI GPT-4.1 Mini)" >&2
+    echo "    5) o3            (OpenAI o3)" >&2
+    echo "    6) gemini-2.5    (Google Gemini 2.5 Pro)" >&2
+    echo "    7) Custom        (type your own)" >&2
+  fi
+  echo "" >&2
+  printf "  Model [current: %s]: " "$current" >&2
+  local choice
+  read -r choice </dev/tty
+  if [[ "$ai_tool" == "claude-code" ]]; then
+    case "${choice}" in
+      1) echo "sonnet" ;; 2) echo "opus" ;; 3) echo "haiku" ;;
+      4) echo "gpt-4.1" ;; 5) echo "gpt-4.1-mini" ;; 6) echo "o3" ;;
+      7) echo "gemini-2.5-pro" ;;
+      8) printf "\n  Model name: " >&2; local m; read -r m </dev/tty; echo "${m:-$current}" ;;
+      "") echo "$current" ;; *) echo "$current" ;;
+    esac
+  else
+    case "${choice}" in
+      1) echo "sonnet" ;; 2) echo "opus" ;;
+      3) echo "gpt-4.1" ;; 4) echo "gpt-4.1-mini" ;; 5) echo "o3" ;;
+      6) echo "gemini-2.5-pro" ;;
+      7) printf "\n  Model name: " >&2; local m; read -r m </dev/tty; echo "${m:-$current}" ;;
+      "") echo "$current" ;; *) echo "$current" ;;
+    esac
+  fi
+}
+
 cmd_agent() {
   local config_file="$1"; shift
   local subcmd="${1:-switch}"
@@ -1563,24 +1751,8 @@ cmd_agent() {
   echo "  Current manager model:  $current_mgr_model"
   echo ""
 
-  echo "  Which AI tool will you use?"
-  echo ""
-  echo "    1) claude-code   (best supported, native Agent Teams)"
-  echo "    2) cursor         (Cursor CLI — agent)"
-  echo "    3) copilot        (GitHub Copilot CLI — copilot)"
-  echo "    4) generic        (any CLI tool)"
-  echo ""
-  printf "  Choice [current: %s]: " "$current_tool"
-  read -r tool_choice </dev/tty
   local ai_tool
-  case "${tool_choice}" in
-    1) ai_tool="claude-code" ;;
-    2) ai_tool="cursor" ;;
-    3) ai_tool="copilot" ;;
-    4) ai_tool="generic" ;;
-    "") ai_tool="$current_tool" ;;
-    *) ai_tool="$current_tool" ;;
-  esac
+  ai_tool=$(_pick_ai_tool "$current_tool")
   echo ""
 
   local model="$current_model"
@@ -1599,63 +1771,7 @@ cmd_agent() {
   echo ""
 
   if [[ "$switch_models" == "y" || "$switch_models" == "Y" ]]; then
-    echo "  Which model?"
-    echo ""
-    if [[ "$ai_tool" == "claude-code" ]]; then
-      echo "    1) sonnet        (Claude Sonnet - fast, affordable)"
-      echo "    2) opus          (Claude Opus - smartest, expensive)"
-      echo "    3) haiku         (Claude Haiku - fastest, cheapest)"
-      echo "    4) gpt-4.1       (OpenAI GPT-4.1)"
-      echo "    5) gpt-4.1-mini  (OpenAI GPT-4.1 Mini)"
-      echo "    6) o3            (OpenAI o3)"
-      echo "    7) gemini-2.5    (Google Gemini 2.5 Pro)"
-      echo "    8) Custom        (type your own)"
-    else
-      echo "    1) sonnet        (Claude Sonnet)"
-      echo "    2) opus          (Claude Opus)"
-      echo "    3) gpt-4.1       (OpenAI GPT-4.1)"
-      echo "    4) gpt-4.1-mini  (OpenAI GPT-4.1 Mini)"
-      echo "    5) o3            (OpenAI o3)"
-      echo "    6) gemini-2.5    (Google Gemini 2.5 Pro)"
-      echo "    7) Custom        (type your own)"
-    fi
-    echo ""
-    printf "  Worker model [current: %s]: " "$current_model"
-    read -r model_choice </dev/tty
-    if [[ "$ai_tool" == "claude-code" ]]; then
-      case "${model_choice}" in
-        1) model="sonnet" ;;
-        2) model="opus" ;;
-        3) model="haiku" ;;
-        4) model="gpt-4.1" ;;
-        5) model="gpt-4.1-mini" ;;
-        6) model="o3" ;;
-        7) model="gemini-2.5-pro" ;;
-        8)
-          printf "\n  Model name: "
-          read -r model </dev/tty
-          [[ -z "$model" ]] && model="$current_model"
-          ;;
-        "") model="$current_model" ;;
-        *) model="$current_model" ;;
-      esac
-    else
-      case "${model_choice}" in
-        1) model="sonnet" ;;
-        2) model="opus" ;;
-        3) model="gpt-4.1" ;;
-        4) model="gpt-4.1-mini" ;;
-        5) model="o3" ;;
-        6) model="gemini-2.5-pro" ;;
-        7)
-          printf "\n  Model name: "
-          read -r model </dev/tty
-          [[ -z "$model" ]] && model="$current_model"
-          ;;
-        "") model="$current_model" ;;
-        *) model="$current_model" ;;
-      esac
-    fi
+    model=$(_pick_model "$ai_tool" "$current_model")
     echo ""
 
     printf "  Manager model [current: %s, enter = same as worker]: " "$current_mgr_model"
@@ -1668,18 +1784,8 @@ cmd_agent() {
     echo ""
   fi
 
-  # Build ai_tool_command
   local ai_tool_command
-  case "$ai_tool" in
-    claude-code) ai_tool_command="claude --model ${model} -p" ;;
-    cursor)      ai_tool_command="agent --model ${model} -p" ;;
-    copilot)     ai_tool_command="copilot --allow-all --model ${model} -p" ;;
-    generic)
-      printf "  Enter the command to invoke your AI tool: "
-      read -r ai_tool_command </dev/tty
-      [[ -z "$ai_tool_command" ]] && ralph_die "AI command is required for generic tools."
-      ;;
-  esac
+  ai_tool_command=$(_build_tool_command "$ai_tool" "$model")
 
   # Handle allow_all for copilot
   local allow_all
@@ -1756,7 +1862,10 @@ cmd_plan() {
     ralph_die "Prompt required for planning. Use -p \"your prompt\" or -p file.md"
 
   local target_repo
-  target_repo=$(config_get "$config" '.target_repo' '.')
+  target_repo=$(config_get "$config" '.default_target_repo' '')
+  if [[ -z "$target_repo" ]]; then
+    target_repo=$(config_get "$config" '.target_repo' '.')
+  fi
 
   ralph_log INFO "Running Ralph in planning mode..."
   

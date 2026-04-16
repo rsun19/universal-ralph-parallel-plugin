@@ -2,6 +2,8 @@
 
 This document explains the full lifecycle of a Ralph run, from the moment you type `ralph start` to the final completion report.
 
+> **Warning:** The phase-based architecture described below (planning, implementation, review) applies to the **legacy bash orchestration mode**, which is not actively maintained and may be broken. For reliable operation, use `--agent-teams` (interactive session mode). See [Agent Teams](06-claude-teams.md) for details on the recommended mode.
+
 ## The Big Picture
 
 ```

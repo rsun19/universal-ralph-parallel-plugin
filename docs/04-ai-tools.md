@@ -46,7 +46,7 @@ Docs: [code.claude.com/docs/en/permissions](https://code.claude.com/docs/en/perm
 
 ### Interactive Agent Teams Mode
 
-All three tools support interactive agent teams via `--agent-teams`:
+All three tools support interactive agent teams via `--agent-teams` (or set `"agent_teams": true` in `ralph.config.json` to enable it by default):
 
 ```bash
 ralph start -p "Build auth with JWT" --agent-teams
@@ -88,11 +88,24 @@ ralph start -p "Build a REST API for todos with CRUD, validation, and tests"
 - Sets the AI command to `agent --model <model> -p`
 - `-p` means "read the prompt from stdin and print the result" (non-interactive)
 - `--model` selects the model (sonnet, opus, gpt-4.1, etc.)
-- Ralph's full bash orchestration works: parallel workers, reviewers, retry loops, atomic task claiming
+
+> **Note:** Use `--agent-teams` for the recommended interactive session mode. Legacy bash orchestration may be broken.
 
 ### Parallel sessions
 
-Cursor's `agent` CLI is tied to a single Cursor IDE window. To support parallel `ralph start` sessions, Ralph automatically opens each worktree in its own Cursor window before running the agent command. Each window gets an independent backend, enabling true parallel execution.
+Ralph supports multiple Cursor sessions running in parallel. Each `ralph start` creates its own isolated worktree and branch, so sessions don't interfere with each other:
+
+```bash
+ralph start -p "Feature A"
+ralph start --repo /path/to/other-project -p "Feature B"
+```
+
+You can also mix CLI tools across sessions:
+
+```bash
+ralph start -p "Feature A"
+ralph start --cli claude-code --model opus --repo /path/to/other-project -p "Feature B"
+```
 
 ### Permissions
 
@@ -135,7 +148,8 @@ ralph start -p "Build a REST API for todos with CRUD, validation, and tests"
 - `--allow-all` skips all permission prompts (always included — see note below)
 - `-p` means "read the prompt from stdin and print the result" (non-interactive)
 - `--model` selects the model (sonnet, opus, gpt-4.1, etc.)
-- Ralph's full bash orchestration works: parallel workers, reviewers, retry loops, atomic task claiming
+
+> **Note:** Use `--agent-teams` for the recommended interactive session mode. Legacy bash orchestration may be broken.
 
 ### Permissions
 

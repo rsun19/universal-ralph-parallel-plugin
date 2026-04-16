@@ -104,7 +104,7 @@ ralph-wiggum/
 5. For Cursor: opens the worktree in a new Cursor window for parallel execution
 6. Writes `session.json` metadata and effective config into the session directory
 
-**Bash orchestration mode** (default):
+**Bash orchestration mode** (legacy — may be broken, use `--agent-teams` instead):
 
 7. `bin/ralph` calls `bin/ralph-manager.sh`
 8. `ralph-manager.sh` sources all `lib/*.sh` libraries

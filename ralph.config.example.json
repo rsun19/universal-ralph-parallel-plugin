@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "target_repo": ".",
+  "default_target_repo": ".",
   "prompt_text": "",
   "ai_tool": "claude-code",
   "ai_tool_command": "claude -p",
