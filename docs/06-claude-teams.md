@@ -5,7 +5,7 @@ This plugin has two modes for running agent teams:
 1. **Bash orchestration** (legacy): Ralph spawns separate CLI processes itself, coordinating through files on disk
 2. **Interactive session mode** (recommended): Ralph runs a multi-turn session where the AI spawns parallel sub-agents, and a manager AI approves plans and provides guidance on the user's behalf
 
-> **Warning:** Bash orchestration mode is legacy and may be broken. Use `--agent-teams` (interactive session mode) for all new work.
+Interactive session mode is the recommended and actively maintained mode. The legacy bash orchestrator is not maintained and may be broken.
 
 This document covers the interactive session mode, which works with **all supported tools** (Claude Code, Cursor, Copilot).
 
@@ -20,7 +20,7 @@ As all major CLIs converge on this capability, Ralph's interactive session mode 
 
 ## Enabling Agent Teams
 
-In `ralph.config.json`:
+Agent teams is enabled by default in `ralph.config.json`:
 
 ```json
 {
@@ -30,7 +30,7 @@ In `ralph.config.json`:
 }
 ```
 
-Or use the CLI flag (not needed if `agent_teams` is already `true` in your config):
+You can also enable it via the CLI flag if it's not set in your config:
 
 ```bash
 ralph start -p PROMPT.md --agent-teams
@@ -144,7 +144,7 @@ Or globally in `~/.claude.json`:
 
 ## Bash orchestration vs. interactive session mode
 
-> **Warning:** Bash orchestration mode is legacy and not actively maintained. It may be broken. Use interactive session mode (`--agent-teams`) for reliable operation.
+Bash orchestration mode is legacy and not actively maintained. It may be broken. Use interactive session mode (`agent_teams: true`) for reliable operation.
 
 | Aspect | Bash orchestration (legacy) | Interactive session (recommended) |
 |--------|-------------------|-------------------|

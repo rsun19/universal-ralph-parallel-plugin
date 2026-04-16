@@ -20,7 +20,7 @@
     "commit_on_success": true,
     "pause_between_iterations_sec": 2
   },
-  "agent_teams": false,
+  "agent_teams": true,
   "claude_teams": {
     "teammate_mode": "in-process"
   },

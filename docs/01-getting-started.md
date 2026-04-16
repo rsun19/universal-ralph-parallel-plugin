@@ -95,7 +95,7 @@ This launches an interactive setup wizard that asks you:
 - **Model** — sonnet, opus, gpt-4.1, etc.
 - **Team size** — how many implementer and reviewer agents
 - **Loop settings** — max iterations per agent
-- **Claude Teams** — whether to use native Agent Teams mode (Claude Code only)
+- **Agent Teams** — interactive session mode (recommended, enabled by default)
 
 It generates your personal `ralph.config.json` (gitignored).
 
@@ -232,5 +232,5 @@ Ralph finds git repositories (up to 4 levels deep), shows a numbered list, and l
 - [Configuration](03-configuration.md) - tune team size, iterations, and more
 - [Choosing an AI Tool](04-ai-tools.md) - setup guides for each supported tool
 - [Writing Good Prompts](05-writing-prompts.md) - get better results
-- [Claude Code Agent Teams](06-claude-teams.md) - native team mode
+- [Agent Teams](06-claude-teams.md) - interactive session mode (recommended)
 - [Troubleshooting](07-troubleshooting.md) - common issues and fixes

@@ -25,7 +25,7 @@ Settings live in `ralph.config.json`, which is created when you run `ralph init`
     "commit_on_success": true,
     "pause_between_iterations_sec": 2
   },
-  "agent_teams": false,
+  "agent_teams": true,
   "claude_teams": {
     "teammate_mode": "in-process"
   },
@@ -213,9 +213,9 @@ Prevents hammering the AI API too aggressively. Increase if you're hitting rate 
 
 **What it does:** Whether to use interactive agent teams mode instead of legacy bash orchestration. Works with all supported AI tools (Claude Code, Cursor, Copilot). When set to `true` in your config, you do not need to pass `--agent-teams` on the command line.
 
-**Default:** `false`
+**Default:** `true` (recommended)
 
-> **Recommended:** Set this to `true`. Bash orchestration mode is legacy and may be broken.
+> **Recommended:** Keep this enabled. The legacy bash orchestrator is not actively maintained and may be broken.
 
 When `true`, Ralph runs a multi-turn interactive session where the AI spawns parallel sub-agents internally. A manager AI (configured via `manager_model`) responds on the user's behalf between turns, approving plans and providing guidance. After each attempt, the manager AI verifies the git diff against requirements. See [Agent Teams](06-claude-teams.md).
 

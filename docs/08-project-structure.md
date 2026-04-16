@@ -104,7 +104,7 @@ ralph-wiggum/
 5. For Cursor: opens the worktree in a new Cursor window for parallel execution
 6. Writes `session.json` metadata and effective config into the session directory
 
-**Bash orchestration mode** (legacy — may be broken, use `--agent-teams` instead):
+**Bash orchestration mode** (legacy — not maintained, use `agent_teams: true` instead):
 
 7. `bin/ralph` calls `bin/ralph-manager.sh`
 8. `ralph-manager.sh` sources all `lib/*.sh` libraries
@@ -113,7 +113,7 @@ ralph-wiggum/
 11. It runs **Phase 3**: spawns `bin/ralph-review.sh` processes. Each reviewer claims completed tasks, builds prompts from `state/templates/prompt-review.md`, runs the AI, and approves or rejects
 12. Prints merge instructions showing how to merge the worktree branch back
 
-**Interactive session mode** (`--agent-teams`):
+**Interactive session mode** (`agent_teams: true`, recommended):
 
 7. `bin/ralph` calls `bin/ralph-interactive.sh`
 8. Generates a team prompt via `lib/team-prompt.sh` using `state/templates/prompt-team.md`, delegates to `lib/session-loop.sh`

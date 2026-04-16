@@ -881,15 +881,16 @@ cmd_init() {
   echo ""
 
   # --- Step 6: Agent Teams (interactive session mode) ---
-  local agent_teams="false"
-  echo "  Enable Agent Teams? (interactive multi-turn session with manager AI)"
+  local agent_teams="true"
+  echo "  Agent Teams (recommended): interactive multi-turn session with manager AI."
   echo "  The AI spawns parallel sub-agents and a manager AI approves their work."
   echo "  Works with all supported tools (Claude Code, Cursor, Copilot)."
+  echo "  The legacy bash orchestrator is not maintained and may be broken."
   echo ""
-  printf "  Enable Agent Teams? [y/N]: "
+  printf "  Enable Agent Teams? [Y/n]: "
   read -r at
-  if [[ "$at" == "y" ]] || [[ "$at" == "Y" ]]; then
-    agent_teams="true"
+  if [[ "$at" == "n" ]] || [[ "$at" == "N" ]]; then
+    agent_teams="false"
   fi
   echo ""
 

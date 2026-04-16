@@ -46,10 +46,10 @@ Docs: [code.claude.com/docs/en/permissions](https://code.claude.com/docs/en/perm
 
 ### Interactive Agent Teams Mode
 
-All three tools support interactive agent teams via `--agent-teams` (or set `"agent_teams": true` in `ralph.config.json` to enable it by default):
+All three tools support interactive agent teams, which is enabled by default (`"agent_teams": true` in `ralph.config.json`):
 
 ```bash
-ralph start -p "Build auth with JWT" --agent-teams
+ralph start -p "Build auth with JWT"
 ```
 
 Instead of one-shot `-p` calls, Ralph maintains a conversation across multiple turns using `--resume`. The AI spawns parallel sub-agents internally, and a **manager AI** (a separate, lighter model) reads each turn's output and automatically responds — approving plans, answering questions, and providing guidance.
@@ -57,7 +57,7 @@ Instead of one-shot `-p` calls, Ralph maintains a conversation across multiple t
 After the conversation turns are exhausted (or completion is detected), the manager AI verifies the actual `git diff` against the original requirements. If requirements aren't met, a fresh session is started with specific feedback.
 
 **Config keys:**
-- `agent_teams` — enable interactive agent teams (default: false)
+- `agent_teams` — enable interactive agent teams (default: true, recommended)
 - `turns` — max conversation turns per attempt (default: 50)
 - `loop.max_iterations` — max retry attempts (default: 3)
 - `manager_model` — model for the manager AI (default: sonnet, cheaper is recommended)
@@ -89,7 +89,7 @@ ralph start -p "Build a REST API for todos with CRUD, validation, and tests"
 - `-p` means "read the prompt from stdin and print the result" (non-interactive)
 - `--model` selects the model (sonnet, opus, gpt-4.1, etc.)
 
-> **Note:** Use `--agent-teams` for the recommended interactive session mode. Legacy bash orchestration may be broken.
+> **Note:** Agent teams (`agent_teams: true`) is the recommended and actively maintained mode. The legacy bash orchestrator is not maintained and may be broken.
 
 ### Parallel sessions
 
@@ -149,7 +149,7 @@ ralph start -p "Build a REST API for todos with CRUD, validation, and tests"
 - `-p` means "read the prompt from stdin and print the result" (non-interactive)
 - `--model` selects the model (sonnet, opus, gpt-4.1, etc.)
 
-> **Note:** Use `--agent-teams` for the recommended interactive session mode. Legacy bash orchestration may be broken.
+> **Note:** Agent teams (`agent_teams: true`) is the recommended and actively maintained mode. The legacy bash orchestrator is not maintained and may be broken.
 
 ### Permissions
 

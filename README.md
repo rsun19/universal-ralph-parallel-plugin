@@ -210,14 +210,14 @@ Config flags (apply to all future runs):
 | `model` | Model for worker agents | `sonnet` |
 | `manager_model` | Model for the manager AI | `sonnet` |
 | `turns` | Max conversation turns per attempt | `50` |
-| `agent_teams` | Enable interactive session mode | `false` |
+| `agent_teams` | Enable interactive session mode (recommended) | `true` |
 | `team.implementers` | Parallel implementer agents | `3` |
 | `team.reviewers` | Parallel reviewer agents | `2` |
 | `loop.max_iterations` | Max retry attempts | `3` |
 | `loop.completion_promise` | Phrase signaling task completion | `ALL_TASKS_COMPLETE` |
 | `loop.commit_on_success` | Auto-commit on completion | `true` |
 
-> **Tip:** Set `"agent_teams": true` in your config so you don't need to pass `--agent-teams` every time.
+> **Recommended:** `"agent_teams": true` should be enabled. This is the actively maintained mode — the legacy bash orchestrator is not maintained and may be broken.
 
 ## Session Isolation
 
