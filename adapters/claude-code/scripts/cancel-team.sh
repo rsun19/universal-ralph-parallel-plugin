@@ -42,7 +42,7 @@ fi
 
 # --- Collect final task status --------------------------------------------
 
-TASK_DIR="${RALPH_ROOT}/state/tasks"
+TASK_DIR="${RALPH_SESSION_DIR:-${RALPH_ROOT}/state}/tasks"
 if [[ -d "$TASK_DIR" ]] && ls "$TASK_DIR"/task-*.json >/dev/null 2>&1; then
   TOTAL=0; PENDING=0; IN_PROGRESS=0; COMPLETED=0; REVIEW=0; APPROVED=0; FAILED=0
 
@@ -81,12 +81,13 @@ echo "State file removed: $STATE_FILE"
 
 # --- Clean up locks -------------------------------------------------------
 
-rm -f "${RALPH_ROOT}/state/tasks"/*.lock 2>/dev/null || true
-rm -f "${RALPH_ROOT}/state/messages"/*.json 2>/dev/null || true
+_state_dir="${RALPH_SESSION_DIR:-${RALPH_ROOT}/state}"
+rm -f "${_state_dir}/tasks"/*.lock 2>/dev/null || true
+rm -f "${_state_dir}/messages"/*.json 2>/dev/null || true
 
 echo ""
 echo "Ralph team cancelled."
-echo "Task files preserved in: ${RALPH_ROOT}/state/tasks/"
+echo "Task files preserved in: ${_state_dir}/tasks/"
 echo "═══════════════════════════════════════════════════════════"
 
 exit 0

@@ -8,7 +8,8 @@ AGENT_DIR=""
 
 init_agent_dir() {
   local ralph_root="${1:-$(resolve_ralph_root)}"
-  AGENT_DIR="${ralph_root}/state/agents"
+  local state_dir="${RALPH_SESSION_DIR:-${ralph_root}/state}"
+  AGENT_DIR="${state_dir}/agents"
   mkdir -p "$AGENT_DIR"
 }
 

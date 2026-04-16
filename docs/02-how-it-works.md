@@ -8,11 +8,14 @@ This document explains the full lifecycle of a Ralph run, from the moment you ty
 You provide a prompt (inline, file, or interactive)
         |
         v
+  [Worktree created: <repo>-worktrees/ralph-<session_id>]
+        |
+        v
   [Manager Agent]
         |
         |-- Phase 1: PLANNING
         |   Sends your prompt to the AI, asks it to break the
-        |   work into 5-15 discrete tasks. Creates a fix_plan.md.
+        |   work into 5-15 discrete tasks.
         |
         |-- Phase 2: IMPLEMENTATION
         |   Spawns N implementer agents in parallel.
@@ -47,7 +50,7 @@ The AI returns something like:
 ]
 ```
 
-The manager turns each of these into a **task file** stored in `state/tasks/`. It also writes a human-readable `fix_plan.md` into your project directory.
+The manager turns each of these into a **task file** stored in the session's `state/sessions/<id>/tasks/` directory and writes a human-readable `fix_plan.md` in the session state.
 
 ## Phase 2: Implementation
 
@@ -55,7 +58,7 @@ The manager spawns implementer agents as background processes. By default, 3 run
 
 Each implementer does this in a loop:
 
-1. **Claim a task** - looks through `state/tasks/` for a `pending` task with no unresolved dependencies, atomically marks it `in_progress` (using file locking so two agents can't grab the same task)
+1. **Claim a task** - looks through the session's task directory for a `pending` task with no unresolved dependencies, atomically marks it `in_progress` (using file locking so two agents can't grab the same task)
 2. **Build a prompt** - takes the task title and description, wraps it in the implementation prompt template, and appends any previous review feedback if this is a retry
 3. **Run the AI** - pipes the prompt to whatever AI tool is configured (Claude Code, Cursor, Copilot, etc.)
 4. **Check for completion** - looks for the text `TASK_DONE` in the AI's output
@@ -93,7 +96,11 @@ The default max retries per task is 3. After 3 failed attempts, a task is marked
 
 Everything is coordinated through files on disk. No network servers, no databases, no message queues.
 
-### Task files (`state/tasks/task-XXXX.json`)
+### Session isolation
+
+Each `ralph start` creates a git worktree at `<repo>-worktrees/ralph-<session_id>` on branch `ralph/<session_id>`. All work happens in this isolated directory. Session state (tasks, logs, config) is stored in `state/sessions/<session_id>/`.
+
+### Task files (`state/sessions/<id>/tasks/task-XXXX.json`)
 
 Each task is a JSON file:
 
@@ -131,17 +138,17 @@ pending --> in_progress --> completed --> review --> approved
                                         failed  (permanently)
 ```
 
-### Agent registry (`state/agents/`)
+### Agent registry (`state/sessions/<id>/agents/`)
 
 Each running agent registers itself with its process ID, role, and current task. The manager uses this to detect dead agents and respawn replacements.
 
-### Messages (`state/messages/`)
+### Messages (`state/sessions/<id>/messages/`)
 
 Agents can send messages to each other (e.g., "Task X completed" or "Task Y rejected"). The manager reads these to stay informed, though the primary coordination happens through task file status changes.
 
-### Logs (`state/logs/`)
+### Logs (`state/sessions/<id>/logs/`)
 
-Every AI call's output is saved to a log file for debugging. You can see exactly what the AI said in each iteration.
+Every AI call's output is saved to a log file for debugging. Browse them interactively with `ralph sessions`.
 
 ## The "Ralph Loop" Concept
 

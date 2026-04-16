@@ -109,10 +109,10 @@ wait_for_file() {
   [[ -f "$file" ]]
 }
 
-# Get the state directory, creating if needed
+# Get the state directory, creating if needed.
+# Prefers the session-scoped RALPH_SESSION_DIR when set (parallel sessions).
 get_state_dir() {
-  local ralph_root="${1:-$(resolve_ralph_root)}"
-  local state_dir="${ralph_root}/state"
+  local state_dir="${RALPH_SESSION_DIR:-${1:-$(resolve_ralph_root)}/state}"
   mkdir -p "$state_dir"/{tasks,messages,agents,prompts}
   echo "$state_dir"
 }
@@ -144,4 +144,53 @@ timestamp_ms() {
   else
     date +%s%3N 2>/dev/null || date +%s000
   fi
+}
+
+# Replace {{KEY}} placeholders in a template file with provided values.
+# Uses bash parameter expansion so multi-line values are safe (no sed).
+# Usage: render_template <file> KEY1 "value1" KEY2 "value2" ...
+render_template() {
+  local file="$1"; shift
+  local content
+  content=$(cat "$file")
+  while [[ $# -ge 2 ]]; do
+    local key="$1" val="$2"; shift 2
+    content="${content//\{\{${key}\}\}/${val}}"
+  done
+  printf '%s' "$content"
+}
+
+# Ensure state/templates/ has all prompt templates.
+# Copies any missing files from the defaults in templates/.
+#   Args: ralph_root
+sync_templates() {
+  local ralph_root="${1:-$(resolve_ralph_root)}"
+  local defaults_dir="${ralph_root}/templates"
+  local user_dir="${ralph_root}/state/templates"
+  mkdir -p "$user_dir"
+
+  for src in "$defaults_dir"/prompt-*.md "$defaults_dir"/AGENT.md.template; do
+    [[ -f "$src" ]] || continue
+    local name
+    name=$(basename "$src")
+    if [[ ! -f "${user_dir}/${name}" ]]; then
+      cp "$src" "${user_dir}/${name}"
+    fi
+  done
+}
+
+# Reset state/templates/ back to defaults (overwrites user edits).
+#   Args: ralph_root
+reset_templates() {
+  local ralph_root="${1:-$(resolve_ralph_root)}"
+  local defaults_dir="${ralph_root}/templates"
+  local user_dir="${ralph_root}/state/templates"
+  mkdir -p "$user_dir"
+
+  for src in "$defaults_dir"/prompt-*.md "$defaults_dir"/AGENT.md.template; do
+    [[ -f "$src" ]] || continue
+    local name
+    name=$(basename "$src")
+    cp "$src" "${user_dir}/${name}"
+  done
 }

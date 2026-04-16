@@ -13,6 +13,8 @@ source "${RALPH_ROOT}/lib/task-manager.sh"
 source "${RALPH_ROOT}/lib/agent-registry.sh"
 source "${RALPH_ROOT}/lib/comms.sh"
 
+STATE_DIR="${RALPH_SESSION_DIR:-${RALPH_ROOT}/state}"
+
 init_task_dir "$RALPH_ROOT"
 init_agent_dir "$RALPH_ROOT"
 init_msg_dir "$RALPH_ROOT"
@@ -50,14 +52,13 @@ run_task() {
   description=$(echo "$task_json" | jq -r '.description')
   review_feedback=$(echo "$task_json" | jq -r '.review_feedback // ""')
 
-  local impl_prompt="${RALPH_ROOT}/state/prompts/worker-${WORKER_ID}-prompt.md"
-  local impl_template="${RALPH_ROOT}/templates/prompt-implement.md"
+  local impl_prompt="${STATE_DIR}/prompts/worker-${WORKER_ID}-prompt.md"
+  local impl_template="${RALPH_ROOT}/state/templates/prompt-implement.md"
 
   if [[ -f "$impl_template" ]]; then
-    sed \
-      -e "s|{{TASK_TITLE}}|${title}|g" \
-      -e "s|{{TASK_ID}}|${task_id}|g" \
-      "$impl_template" > "$impl_prompt"
+    render_template "$impl_template" \
+      TASK_TITLE "$title" \
+      TASK_ID "$task_id" > "$impl_prompt"
     
     {
       echo ""
@@ -103,7 +104,7 @@ $(if [[ -n "$review_feedback" ]]; then echo "## Previous Review Feedback (MUST A
 IMPL_EOF
   fi
 
-  local task_output="${RALPH_ROOT}/state/logs/${task_id}-output.log"
+  local task_output="${STATE_DIR}/logs/${task_id}-output.log"
   mkdir -p "$(dirname "$task_output")"
 
   local iteration=0
@@ -114,7 +115,7 @@ IMPL_EOF
     ralph_log INFO "Worker $WORKER_ID: Task $task_id iteration $iteration"
     agent_heartbeat "$WORKER_ID"
 
-    local iter_output="${RALPH_ROOT}/state/logs/${task_id}-iter-${iteration}.log"
+    local iter_output="${STATE_DIR}/logs/${task_id}-iter-${iteration}.log"
     local iter_exit=0
     (cd "$TARGET_REPO" && cat "$impl_prompt" | eval "$AI_COMMAND") > "$iter_output" 2>&1 || iter_exit=$?
 

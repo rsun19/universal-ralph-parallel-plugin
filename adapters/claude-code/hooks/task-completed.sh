@@ -14,7 +14,7 @@ fi
 PLUGIN_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 RALPH_ROOT="$(cd "$PLUGIN_ROOT/../../.." && pwd)"
 
-TASK_FILE="${RALPH_ROOT}/state/tasks/${TASK_ID}.json"
+TASK_FILE="${RALPH_SESSION_DIR:-${RALPH_ROOT}/state}/tasks/${TASK_ID}.json"
 if [[ ! -f "$TASK_FILE" ]]; then
   exit 0
 fi

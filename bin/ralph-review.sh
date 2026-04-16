@@ -13,6 +13,8 @@ source "${RALPH_ROOT}/lib/task-manager.sh"
 source "${RALPH_ROOT}/lib/agent-registry.sh"
 source "${RALPH_ROOT}/lib/comms.sh"
 
+STATE_DIR="${RALPH_SESSION_DIR:-${RALPH_ROOT}/state}"
+
 init_task_dir "$RALPH_ROOT"
 init_agent_dir "$RALPH_ROOT"
 init_msg_dir "$RALPH_ROOT"
@@ -41,7 +43,7 @@ trap cleanup EXIT INT TERM
 ralph_log INFO "Reviewer $REVIEWER_ID started (num=$REVIEWER_NUM)"
 
 claim_review_task() {
-  for task_file in "${RALPH_ROOT}/state/tasks"/task-*.json; do
+  for task_file in "${STATE_DIR}/tasks"/task-*.json; do
     [[ -f "$task_file" ]] || continue
     local lock_file="${task_file}.lock"
     
@@ -76,14 +78,13 @@ run_review() {
   title=$(echo "$task_json" | jq -r '.title')
   description=$(echo "$task_json" | jq -r '.description')
 
-  local review_prompt="${RALPH_ROOT}/state/prompts/reviewer-${REVIEWER_ID}-prompt.md"
-  local review_template="${RALPH_ROOT}/templates/prompt-review.md"
+  local review_prompt="${STATE_DIR}/prompts/reviewer-${REVIEWER_ID}-prompt.md"
+  local review_template="${RALPH_ROOT}/state/templates/prompt-review.md"
 
   if [[ -f "$review_template" ]]; then
-    sed \
-      -e "s|{{TASK_TITLE}}|${title}|g" \
-      -e "s|{{TASK_ID}}|${task_id}|g" \
-      "$review_template" > "$review_prompt"
+    render_template "$review_template" \
+      TASK_TITLE "$title" \
+      TASK_ID "$task_id" > "$review_prompt"
     {
       echo ""
       echo "## Task Description"
@@ -132,7 +133,7 @@ Be thorough but fair. Only reject for real issues, not style preferences.
 REVIEW_EOF
   fi
 
-  local review_output="${RALPH_ROOT}/state/logs/${task_id}-review.log"
+  local review_output="${STATE_DIR}/logs/${task_id}-review.log"
   local review_exit=0
   (cd "$TARGET_REPO" && cat "$review_prompt" | eval "$AI_COMMAND") > "$review_output" 2>&1 || review_exit=$?
 

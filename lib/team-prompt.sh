@@ -32,42 +32,20 @@ build_team_prompt() {
 "
   done
 
-  cat <<TEAM_EOF
-Create an agent team for a Ralph Wiggum iterative development session.
+  local ralph_root
+  ralph_root=$(resolve_ralph_root)
+  local template="${ralph_root}/state/templates/prompt-team.md"
 
-## The Task
-${prompt_content}
-
-## Team Structure
-Create the following teammates:
-
-### Implementers (${num_impl})
-${impl_list}
-### Reviewers (${num_rev})
-${reviewer_list}
-## Workflow
-1. Break the task into 5-15 discrete subtasks in the shared task list
-2. Assign tasks to implementers
-3. Implementers plan their approach (you must approve before they code)
-4. Once implemented, assign the task to a reviewer
-5. If rejected, update the task with feedback and reassign to an implementer
-6. Max retries per task: ${max_retries}
-7. When all tasks are approved, output: <promise>ALL_TASKS_COMPLETE</promise>
-
-## Quality Standards
-- No placeholder or stub implementations
-- All code must have tests
-- Tests must pass
-- Reviewers verify spec compliance
-
-## Target Repository
-${target_repo}
-
-## Manager Rules
-- Wait for teammates to complete their tasks before proceeding
-- If a task is stuck, provide specific guidance
-- Keep fix_plan.md updated in the target repo
-- Broadcast progress updates periodically
-- Only approve implementer plans that include test coverage
-TEAM_EOF
+  if [[ -f "$template" ]]; then
+    render_template "$template" \
+      PROMPT_CONTENT "$prompt_content" \
+      NUM_IMPLEMENTERS "$num_impl" \
+      IMPLEMENTER_LIST "$impl_list" \
+      NUM_REVIEWERS "$num_rev" \
+      REVIEWER_LIST "$reviewer_list" \
+      MAX_RETRIES "$max_retries" \
+      TARGET_REPO "$target_repo"
+  else
+    ralph_die "Missing template: $template (run 'ralph templates' to see all templates)"
+  fi
 }

@@ -14,6 +14,8 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/utils.sh"
 
+
+
 # ---------------------------------------------------------------------------
 # session_start — Run the first turn of a new session
 #   Args: initial_cmd  prompt_text  target_dir  output_file
@@ -95,29 +97,19 @@ manager_respond() {
   local plan_text="$4"
   local target_dir="$5"
 
+  local ralph_root
+  ralph_root=$(resolve_ralph_root)
+  local template="${ralph_root}/state/templates/prompt-manager-respond.md"
+
   local mgr_prompt
-  mgr_prompt="You are the human manager for an AI coding team session. Act as a decisive senior developer.
-
-Your job:
-- APPROVE good implementation plans with brief confirmation
-- REJECT incomplete plans with specific missing items
-- Answer technical questions concisely
-- Provide guidance when agents are stuck or ask for direction
-- If the team reports completion, acknowledge it
-
-Rules:
-- Be concise. One paragraph max per response.
-- Never ask the AI to explain itself — just approve or provide direction.
-- If you see no question or request for approval, say: \"Continue with the current plan.\"
-
---- ORIGINAL REQUIREMENTS ---
-${original_prompt}
-
---- IMPLEMENTATION PLAN ---
-${plan_text:-Not yet generated.}
-
---- SESSION OUTPUT (latest turn) ---
-${session_output}"
+  if [[ -f "$template" ]]; then
+    mgr_prompt=$(render_template "$template" \
+      ORIGINAL_PROMPT "$original_prompt" \
+      PLAN_TEXT "${plan_text:-Not yet generated.}" \
+      SESSION_OUTPUT "$session_output")
+  else
+    ralph_die "Missing template: $template"
+  fi
 
   local mgr_output=""
   mgr_output=$(cd "$target_dir" && printf '%s\n' "$mgr_prompt" | eval "$manager_cmd" 2>/dev/null) || true
@@ -147,21 +139,19 @@ verify_completion() {
   local plan_text="$4"
   local target_dir="$5"
 
+  local ralph_root
+  ralph_root=$(resolve_ralph_root)
+  local template="${ralph_root}/state/templates/prompt-verify.md"
+
   local verify_prompt
-  verify_prompt="You are verifying whether an AI coding team completed all requirements.
-Compare the git diff against the original requirements and the implementation plan.
-
-If ALL requirements are met, respond with exactly one word: COMPLETE
-If requirements are missing or incomplete, respond with a concise bullet list of what's incomplete. Do NOT include any other text.
-
---- ORIGINAL REQUIREMENTS ---
-${original_prompt}
-
---- IMPLEMENTATION PLAN ---
-${plan_text:-No plan was generated.}
-
---- GIT DIFF (summary of all changes) ---
-${git_diff}"
+  if [[ -f "$template" ]]; then
+    verify_prompt=$(render_template "$template" \
+      ORIGINAL_PROMPT "$original_prompt" \
+      PLAN_TEXT "${plan_text:-No plan was generated.}" \
+      GIT_DIFF "$git_diff")
+  else
+    ralph_die "Missing template: $template"
+  fi
 
   local verify_output=""
   verify_output=$(cd "$target_dir" && printf '%s\n' "$verify_prompt" | eval "$manager_cmd" 2>/dev/null) || true
@@ -220,8 +210,9 @@ session_loop() {
   local original_prompt
   original_prompt=$(cat "$prompt_file")
 
-  local log_base="${ralph_root}/state/logs/agent-teams"
-  rm -rf "$log_base"
+  local state_dir="${RALPH_SESSION_DIR:-${ralph_root}/state}"
+  local session_id="${RALPH_SESSION_ID:-default}"
+  local log_base="${state_dir}/logs/agent-teams/${session_id}"
   mkdir -p "$log_base"
 
   local attempt=0
@@ -395,10 +386,55 @@ ${untracked}"
   if [[ "$overall_success" == "true" ]]; then
     ralph_log INFO "Session loop completed successfully after ${attempt} attempt(s)."
     echo "<promise>${completion_promise}</promise>"
-    return 0
   else
     ralph_log WARN "Session loop exhausted ${max_retries} attempts without full verification."
     ralph_log INFO "Logs: ${log_base}/"
+  fi
+
+  # ===================== NEXT STEPS =====================
+  _print_merge_instructions "$target_dir"
+
+  if [[ "$overall_success" == "true" ]]; then
+    return 0
+  else
     return 1
   fi
+}
+
+_print_merge_instructions() {
+  local worktree_dir="$1"
+  local session_dir="${RALPH_SESSION_DIR:-}"
+  [[ -z "$session_dir" ]] && return
+
+  local meta="${session_dir}/session.json"
+  [[ ! -f "$meta" ]] && return
+
+  local orig_repo branch
+  orig_repo=$(jq -r '.original_target_repo // empty' "$meta" 2>/dev/null)
+  branch=$(jq -r '.branch // empty' "$meta" 2>/dev/null)
+  [[ -z "$orig_repo" || -z "$branch" ]] && return
+
+  echo ""
+  echo "  ┌─────────────────────────────────────────────────────────┐"
+  echo "  │                     Next Steps                          │"
+  echo "  └─────────────────────────────────────────────────────────┘"
+  echo ""
+  echo "  Ralph worked in an isolated worktree. To use the changes:"
+  echo ""
+  echo "  1. Review what was done:"
+  echo "     cd $worktree_dir"
+  echo "     git diff main"
+  echo "     git log --oneline main..HEAD"
+  echo ""
+  echo "  2. Merge into your main branch:"
+  echo "     cd $orig_repo"
+  echo "     git merge $branch"
+  echo ""
+  echo "  3. Or push the branch for a PR:"
+  echo "     cd $worktree_dir"
+  echo "     git push -u origin $branch"
+  echo ""
+  echo "  4. Clean up when done:"
+  echo "     ralph prune --session ${RALPH_SESSION_ID}"
+  echo ""
 }

@@ -60,7 +60,7 @@ if [[ "$RALPH_STATE_FILE" == *.json ]]; then
     --arg msg "Ralph iteration $NEXT_ITERATION | Continue working on the current task." \
     '{
       "decision": "block",
-      "reason": "Continue working on the current task. Check fix_plan.md for progress and pick up the next most important item.",
+      "reason": "Continue working on the current task. Check the task list for progress and pick up the next most important item.",
       "systemMessage": $msg
     }'
   exit 0

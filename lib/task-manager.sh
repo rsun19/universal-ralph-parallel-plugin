@@ -8,7 +8,8 @@ TASK_DIR=""
 
 init_task_dir() {
   local ralph_root="${1:-$(resolve_ralph_root)}"
-  TASK_DIR="${ralph_root}/state/tasks"
+  local state_dir="${RALPH_SESSION_DIR:-${ralph_root}/state}"
+  TASK_DIR="${state_dir}/tasks"
   mkdir -p "$TASK_DIR"
 }
 

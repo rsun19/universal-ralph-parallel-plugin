@@ -84,7 +84,7 @@ The plugin provides three subagent definitions in `adapters/claude-code/agents/`
 Defines the team lead role. Has access to all tools (Read, Write, Bash, Grep, Glob, SendMessage, TodoWrite). Its instructions tell it to:
 - Break tasks into 5-15 focused subtasks
 - Monitor progress and reassign failed tasks
-- Keep fix_plan.md updated
+- Track progress and broadcast updates
 - Output `<promise>ALL_TASKS_COMPLETE</promise>` when done
 
 ### `implementer.md`
@@ -152,7 +152,7 @@ Or globally in `~/.claude.json`:
 | Context sharing | Workers are isolated | All teammates share conversation context |
 | Verification | None (trusts completion promise) | Manager AI reads git diff and verifies requirements |
 | Cost | N one-shot calls | Many turns + manager AI calls (higher) |
-| Monitoring | `ralph status` (task list) | `ralph status` (per-turn/per-attempt logs) |
+| Monitoring | `ralph sessions` (task list) | `ralph sessions` (per-turn/per-attempt logs) |
 
 **Use bash orchestration** when you want full mechanical control, isolated workers, or maximum parallelism.
 

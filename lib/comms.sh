@@ -8,7 +8,8 @@ MSG_DIR=""
 
 init_msg_dir() {
   local ralph_root="${1:-$(resolve_ralph_root)}"
-  MSG_DIR="${ralph_root}/state/messages"
+  local state_dir="${RALPH_SESSION_DIR:-${ralph_root}/state}"
+  MSG_DIR="${state_dir}/messages"
   mkdir -p "$MSG_DIR"
 }
 

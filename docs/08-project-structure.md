@@ -13,12 +13,13 @@ ralph-wiggum/
 │   └── ralph-review.sh           # Reviewer agent (bash mode)
 │
 ├── lib/                          # Shared libraries (sourced by scripts)
-│   ├── utils.sh                  # Logging, config loading, ID generation
+│   ├── utils.sh                  # Logging, config, template rendering, ID generation
 │   ├── loop-engine.sh            # Core Ralph loop (run AI, check promise)
 │   ├── session-loop.sh           # Interactive session engine (multi-turn + retries)
 │   ├── team-prompt.sh            # Tool-agnostic team prompt generator
 │   ├── task-manager.sh           # Task CRUD, claiming, status transitions
 │   ├── agent-registry.sh         # Agent lifecycle tracking
+│   ├── worktree.sh               # Git worktree create/remove/list
 │   └── comms.sh                  # Inter-agent messaging
 │
 ├── adapters/                     # AI tool-specific integrations
@@ -51,25 +52,37 @@ ralph-wiggum/
 │   └── generic/                  # Generic adapter (any CLI tool)
 │       └── ralph-generic-adapter.sh
 │
-├── templates/                    # Prompt templates
+├── templates/                    # Default prompt templates (read-only source)
 │   ├── prompt-plan.md            # Planning prompt (task breakdown)
 │   ├── prompt-implement.md       # Implementation prompt (per task)
 │   ├── prompt-review.md          # Review prompt (per task)
 │   ├── prompt-manager.md         # Manager coordination prompt
+│   ├── prompt-team.md            # Agent teams orchestration prompt
+│   ├── prompt-manager-respond.md # Manager turn-by-turn response prompt
+│   ├── prompt-verify.md          # Completion verification prompt
 │   └── AGENT.md.template         # Template for project learnings file
 │
 ├── state/                        # Runtime state (gitignored)
+│   ├── templates/                # Editable copies of prompt templates
+│   │   ├── prompt-plan.md        # (copied from templates/ on init/start)
+│   │   └── ...                   # Edit these; ralph templates --reset restores defaults
 │   ├── prompts/                  # Generated prompt files
-│   ├── tasks/                    # Task JSON files
-│   ├── agents/                   # Agent registry files
-│   ├── messages/                 # Inter-agent messages
-│   └── logs/                     # AI output logs per iteration
-│       └── agent-teams/          # Interactive session logs
-│           └── attempt-N/        # Per-attempt directory
-│               ├── turn-01.json  # Raw JSON output from AI
-│               ├── turn-01.log   # Human-readable output
-│               ├── manager-02.log # Manager AI response for turn 2
-│               └── verification.log # Manager AI diff verdict
+│   └── sessions/                 # Per-session state
+│       └── <session_id>/         # One directory per ralph start
+│           ├── session.json      # Session metadata (repo, branch, worktree path)
+│           ├── .ralph-config-effective.json  # Resolved config for this session
+│           ├── fix_plan.md       # Generated task breakdown
+│           ├── tasks/            # Task JSON files
+│           ├── agents/           # Agent registry files
+│           ├── messages/         # Inter-agent messages
+│           └── logs/             # Session logs
+│               └── agent-teams/
+│                   └── <session_id>/
+│                       └── attempt-N/
+│                           ├── turn-01.json    # Raw JSON output from AI
+│                           ├── turn-01.log     # Human-readable output
+│                           ├── manager-02.log  # Manager AI response
+│                           └── verification.log # Manager AI diff verdict
 │
 ├── docs/                         # Documentation (you are here)
 │
@@ -84,28 +97,36 @@ ralph-wiggum/
 
 ### When you run `ralph start -p "your prompt"`:
 
+1. `bin/ralph` parses your flags, loads `ralph.config.json`, applies CLI overrides
+2. Creates a git worktree at `<repo>-worktrees/ralph-<session_id>` on branch `ralph/<session_id>`
+3. Creates session state directory at `state/sessions/<session_id>/`
+4. Syncs prompt templates from `templates/` to `state/templates/` (copies any missing ones)
+5. For Cursor: opens the worktree in a new Cursor window for parallel execution
+6. Writes `session.json` metadata and effective config into the session directory
+
 **Bash orchestration mode** (default):
 
-1. `bin/ralph` parses your flags, loads `ralph.config.json`, applies CLI overrides
-2. `bin/ralph` calls `bin/ralph-manager.sh`
-3. `ralph-manager.sh` sources all `lib/*.sh` libraries
-4. It runs **Phase 1**: builds a planning prompt, pipes it to the AI tool, parses the JSON task list, creates files in `state/tasks/`
-5. It runs **Phase 2**: spawns `bin/ralph-worker.sh` processes in the background. Each worker claims tasks, builds prompts from `templates/prompt-implement.md`, runs the AI in a loop, and updates task status
-6. It runs **Phase 3**: spawns `bin/ralph-review.sh` processes. Each reviewer claims completed tasks, builds prompts from `templates/prompt-review.md`, runs the AI, and approves or rejects
-7. The manager monitors `state/tasks/` for progress, respawns dead agents, and loops if rejected tasks need retrying
+7. `bin/ralph` calls `bin/ralph-manager.sh`
+8. `ralph-manager.sh` sources all `lib/*.sh` libraries
+9. It runs **Phase 1**: builds a planning prompt from `state/templates/prompt-plan.md`, pipes it to the AI tool, parses the JSON task list, creates files in the session's `tasks/` directory
+10. It runs **Phase 2**: spawns `bin/ralph-worker.sh` processes. Each worker claims tasks, builds prompts from `state/templates/prompt-implement.md`, runs the AI in a loop, and updates task status
+11. It runs **Phase 3**: spawns `bin/ralph-review.sh` processes. Each reviewer claims completed tasks, builds prompts from `state/templates/prompt-review.md`, runs the AI, and approves or rejects
+12. Prints merge instructions showing how to merge the worktree branch back
 
 **Interactive session mode** (`--agent-teams`):
 
-1. `bin/ralph` parses flags, loads config, calls `bin/ralph-interactive.sh`
-2. `ralph-interactive.sh` generates a team prompt via `lib/team-prompt.sh`, then delegates to `lib/session-loop.sh`
-3. **Inner loop**: First turn starts a session (`--output-format json`), captures `session_id`. Subsequent turns use `--resume` to maintain context. Between turns, the manager AI reads output and generates approvals/feedback.
-4. **Outer loop**: After turns are exhausted, the manager AI reads the `git diff` and compares against requirements. If incomplete, a fresh session starts with specific retry feedback.
-5. Logs are written per-turn to `state/logs/agent-teams/attempt-N/`
+7. `bin/ralph` calls `bin/ralph-interactive.sh`
+8. Generates a team prompt via `lib/team-prompt.sh` using `state/templates/prompt-team.md`, delegates to `lib/session-loop.sh`
+9. **Inner loop**: First turn starts a session (`--output-format json`), captures `session_id`. Subsequent turns use `--resume`. Between turns, the manager AI reads output and generates approvals/feedback.
+10. **Outer loop**: After turns are exhausted, the manager AI reads the `git diff` and compares against requirements. If incomplete, a fresh session starts with specific retry feedback.
+11. Logs are written per-turn to `state/sessions/<id>/logs/agent-teams/<id>/attempt-N/`
+12. Prints merge instructions when complete
 
 ### When you run `ralph init`:
 
 1. An interactive wizard collects your preferences (repo path, AI tool, model, team size)
 2. Writes `ralph.config.json` (gitignored, never checked in)
+3. Copies default prompt templates from `templates/` to `state/templates/`
 
 ### The adapter pattern
 

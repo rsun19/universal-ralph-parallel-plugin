@@ -122,11 +122,12 @@ ralph start -p detailed-spec.md
 ```
 
 That's it. Ralph will:
-1. Ask the AI to read your prompt and break it into subtasks
-2. Launch 3 implementer agents in parallel to work on those subtasks
-3. Launch 2 reviewer agents to check completed work
-4. Retry anything that gets rejected
-5. Print a report when everything is done (or max iterations are hit)
+1. Create an isolated git worktree and branch for this session
+2. Ask the AI to read your prompt and break it into subtasks
+3. Launch 3 implementer agents in parallel to work on those subtasks
+4. Launch 2 reviewer agents to check completed work
+5. Retry anything that gets rejected
+6. Print a completion report with instructions to merge the worktree back
 
 ## What to expect
 
@@ -137,15 +138,37 @@ That's it. Ralph will:
 
 ## Monitoring progress
 
-While Ralph is running, open another terminal and check status:
+While Ralph is running, open another terminal and check sessions:
 
 ```bash
-ralph status
+ralph sessions
 ```
 
 This shows you:
-- How many tasks are pending, in progress, completed, in review, approved, or failed
-- Which agents are running and what they're working on
+- All active and past sessions with RUNNING/IDLE status
+- Which branch and repo each session is working on
+- Attempt count, turns, and latest manager/AI output
+- Interactive log browsing for any session
+
+## After completion
+
+When a session finishes, Ralph prints next steps with copy-pasteable commands:
+
+```bash
+# Review the changes
+cd /path/to/worktree
+git diff main
+
+# Merge into your main branch
+cd /path/to/original-repo
+git merge ralph/<session_id>
+
+# Or push the branch for a PR
+git push -u origin ralph/<session_id>
+
+# Clean up when done
+ralph prune --session <session_id>
+```
 
 ## Stopping Ralph
 
@@ -156,6 +179,20 @@ ralph cancel
 ```
 
 This kills all agent processes but preserves the task state so you can inspect what happened.
+
+## Parallel sessions
+
+Every `ralph start` creates its own isolated worktree and branch, so you can run multiple sessions simultaneously:
+
+```bash
+# Terminal 1
+ralph start -p "Build the auth module"
+
+# Terminal 2 (separate worktree, separate branch)
+ralph start -p "Build the payment integration"
+```
+
+> **Note:** Cursor users get each worktree opened in its own Cursor window automatically. Claude Code and Copilot support full parallelism natively.
 
 ## Finding repos (scan)
 
