@@ -7,20 +7,15 @@ ralph-wiggum/
 │
 ├── bin/                          # Executable scripts
 │   ├── ralph                     # Main CLI (entry point for all commands)
-│   ├── ralph-interactive.sh      # Interactive agent teams session runner
-│   ├── ralph-manager.sh          # Manager agent orchestrator (bash mode)
-│   ├── ralph-worker.sh           # Implementer agent (bash mode)
-│   └── ralph-review.sh           # Reviewer agent (bash mode)
+│   └── ralph-interactive.sh      # Interactive agent teams session runner
 │
 ├── lib/                          # Shared libraries (sourced by scripts)
 │   ├── utils.sh                  # Logging, config, template rendering, ID generation
 │   ├── loop-engine.sh            # Core Ralph loop (run AI, check promise)
 │   ├── session-loop.sh           # Interactive session engine (multi-turn + retries)
 │   ├── team-prompt.sh            # Tool-agnostic team prompt generator
-│   ├── task-manager.sh           # Task CRUD, claiming, status transitions
 │   ├── agent-registry.sh         # Agent lifecycle tracking
-│   ├── worktree.sh               # Git worktree create/remove/list
-│   └── comms.sh                  # Inter-agent messaging
+│   └── worktree.sh               # Git worktree create/remove/list
 │
 ├── adapters/                     # AI tool-specific integrations
 │   ├── claude-code/              # Claude Code adapter
@@ -54,9 +49,6 @@ ralph-wiggum/
 │
 ├── templates/                    # Default prompt templates (read-only source)
 │   ├── prompt-plan.md            # Planning prompt (task breakdown)
-│   ├── prompt-implement.md       # Implementation prompt (per task)
-│   ├── prompt-review.md          # Review prompt (per task)
-│   ├── prompt-manager.md         # Manager coordination prompt
 │   ├── prompt-team.md            # Agent teams orchestration prompt
 │   ├── prompt-manager-respond.md # Manager turn-by-turn response prompt
 │   ├── prompt-verify.md          # Completion verification prompt
@@ -71,10 +63,6 @@ ralph-wiggum/
 │       └── <session_id>/         # One directory per ralph start
 │           ├── session.json      # Session metadata (repo, branch, worktree path)
 │           ├── .ralph-config-effective.json  # Resolved config for this session
-│           ├── fix_plan.md       # Generated task breakdown
-│           ├── tasks/            # Task JSON files
-│           ├── agents/           # Agent registry files
-│           ├── messages/         # Inter-agent messages
 │           └── logs/             # Session logs
 │               └── agent-teams/
 │                   └── <session_id>/
@@ -103,18 +91,6 @@ ralph-wiggum/
 4. Syncs prompt templates from `templates/` to `state/templates/` (copies any missing ones)
 5. For Cursor: opens the worktree in a new Cursor window for parallel execution
 6. Writes `session.json` metadata and effective config into the session directory
-
-**Bash orchestration mode** (legacy — not maintained, use `agent_teams: true` instead):
-
-7. `bin/ralph` calls `bin/ralph-manager.sh`
-8. `ralph-manager.sh` sources all `lib/*.sh` libraries
-9. It runs **Phase 1**: builds a planning prompt from `state/templates/prompt-plan.md`, pipes it to the AI tool, parses the JSON task list, creates files in the session's `tasks/` directory
-10. It runs **Phase 2**: spawns `bin/ralph-worker.sh` processes. Each worker claims tasks, builds prompts from `state/templates/prompt-implement.md`, runs the AI in a loop, and updates task status
-11. It runs **Phase 3**: spawns `bin/ralph-review.sh` processes. Each reviewer claims completed tasks, builds prompts from `state/templates/prompt-review.md`, runs the AI, and approves or rejects
-12. Prints merge instructions showing how to merge the worktree branch back
-
-**Interactive session mode** (`agent_teams: true`, recommended):
-
 7. `bin/ralph` calls `bin/ralph-interactive.sh`
 8. Generates a team prompt via `lib/team-prompt.sh` using `state/templates/prompt-team.md`, delegates to `lib/session-loop.sh`
 9. **Inner loop**: First turn starts a session (`--output-format json`), captures `session_id`. Subsequent turns use `--resume`. Between turns, the manager AI reads output and generates approvals/feedback.
@@ -132,7 +108,7 @@ ralph-wiggum/
 
 Each adapter exports these functions:
 
-- `get_adapter_command(config_file)` — One-shot command for workers/reviewers (e.g., `claude --model sonnet -p`)
+- `get_adapter_command(config_file)` — One-shot command (e.g., `claude --model sonnet -p`)
 - `get_initial_command(config_file)` — First turn of an interactive session (includes `--output-format json`)
 - `get_session_command(config_file, session_id)` — Resume an existing session (includes `--resume`)
 - `get_manager_command(config_file)` — Lightweight command for the manager AI (uses `manager_model`)

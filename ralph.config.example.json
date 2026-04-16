@@ -11,23 +11,13 @@
   "_model_options": ["sonnet", "opus", "haiku", "gpt-4.1", "gpt-4.1-mini", "o3", "gemini-2.5-pro"],
   "team": {
     "implementers": 3,
-    "reviewers": 2,
-    "max_retries_per_task": 3
+    "reviewers": 2
   },
   "loop": {
     "max_iterations": 3,
-    "completion_promise": "ALL_TASKS_COMPLETE",
-    "commit_on_success": true,
-    "pause_between_iterations_sec": 2
+    "completion_promise": "ALL_TASKS_COMPLETE"
   },
-  "agent_teams": true,
   "claude_teams": {
     "teammate_mode": "in-process"
-  },
-  "review": {
-    "check_tests": true,
-    "check_placeholders": true,
-    "check_spec_compliance": true,
-    "auto_approve_on_pass": false
   }
 }

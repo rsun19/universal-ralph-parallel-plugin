@@ -2,8 +2,6 @@
 
 This document explains the full lifecycle of a Ralph run, from the moment you type `ralph start` to the final completion report.
 
-> **Note:** The phase-based architecture described below (planning, implementation, review) applies to the **legacy bash orchestration mode**, which is not actively maintained and may be broken. Agent teams (`agent_teams: true`) is the recommended and actively maintained mode. See [Agent Teams](06-claude-teams.md) for details.
-
 ## The Big Picture
 
 ```
@@ -13,157 +11,83 @@ You provide a prompt (inline, file, or interactive)
   [Worktree created: <repo>-worktrees/ralph-<session_id>]
         |
         v
-  [Manager Agent]
+  [Interactive Session]
         |
-        |-- Phase 1: PLANNING
-        |   Sends your prompt to the AI, asks it to break the
-        |   work into 5-15 discrete tasks.
+        |-- Inner loop (turns)
+        |   Ralph sends your prompt to the AI. The AI works on
+        |   the task, spawning sub-agents as needed. A manager AI
+        |   reads each turn's output and responds — approving
+        |   plans, answering questions, providing guidance.
         |
-        |-- Phase 2: IMPLEMENTATION
-        |   Spawns N implementer agents in parallel.
-        |   Each one claims a task, runs an AI loop on it,
-        |   and marks it done when finished.
+        |-- Outer loop (retries)
+        |   After turns are exhausted, the manager AI reads the
+        |   git diff and compares against requirements. If
+        |   something is missing, a fresh session starts with
+        |   specific retry feedback.
         |
-        |-- Phase 3: REVIEW
-        |   Spawns M reviewer agents in parallel.
-        |   Each one picks up a completed task, asks the AI
-        |   to review it, and approves or rejects it.
-        |
-        |-- Phase 4: RETRY or COMPLETE
-        |   Rejected tasks go back to pending with feedback.
-        |   If tasks remain, loop back to Phase 2.
-        |   If all tasks are approved (or permanently failed),
-        |   generate a completion report and stop.
         v
   Completion Report
 ```
 
-## Phase 1: Planning
+## Inner Loop (Turns)
 
-When you run `ralph start -p "your prompt"` (or `-p spec.md` for a file), the manager agent starts first. It reads your prompt and sends it to the AI tool with instructions to break the work into a JSON array of tasks.
+When you run `ralph start -p "your prompt"`, Ralph starts an interactive multi-turn session with the AI tool.
 
-The AI returns something like:
+1. **First turn**: Ralph sends your prompt along with a team orchestration template. The AI reads the prompt, proposes a plan, and may spawn sub-agents to work on different parts in parallel.
+2. **Manager response**: A lightweight **manager AI** (a separate, cheaper model) reads the AI's output and generates a response — approving the plan, answering questions, or providing guidance.
+3. **Resume**: Ralph resumes the session with the manager's response, and the AI continues working.
+4. **Repeat**: This continues for up to `turns` conversations (default: 50).
 
-```json
-[
-  {"title": "Set up project structure", "description": "...", "priority": "high"},
-  {"title": "Create database schema", "description": "...", "priority": "high"},
-  {"title": "Implement GET /books endpoint", "description": "...", "priority": "medium"}
-]
-```
-
-The manager turns each of these into a **task file** stored in the session's `state/sessions/<id>/tasks/` directory and writes a human-readable `fix_plan.md` in the session state.
-
-## Phase 2: Implementation
-
-The manager spawns implementer agents as background processes. By default, 3 run in parallel.
-
-Each implementer does this in a loop:
-
-1. **Claim a task** - looks through the session's task directory for a `pending` task with no unresolved dependencies, atomically marks it `in_progress` (using file locking so two agents can't grab the same task)
-2. **Build a prompt** - takes the task title and description, wraps it in the implementation prompt template, and appends any previous review feedback if this is a retry
-3. **Run the AI** - pipes the prompt to whatever AI tool is configured (Claude Code, Cursor, Copilot, etc.)
-4. **Check for completion** - looks for the text `TASK_DONE` in the AI's output
-5. **Report back** - marks the task as `completed` and optionally commits to git
-6. **Repeat** - goes back to step 1 to claim the next task
-
-If the AI doesn't output `TASK_DONE` within the max iterations, the task is still marked completed (the manager and reviewers will catch quality issues).
-
-When there are no more tasks to claim, the implementer shuts itself down.
-
-## Phase 3: Review
-
-After all implementers finish, the manager moves `completed` tasks to `review` status and spawns reviewer agents.
-
-Each reviewer:
-
-1. **Claims a review task** - same file-locking mechanism as implementers
-2. **Builds a review prompt** - asks the AI to check recent git changes, run tests, look for placeholders
-3. **Runs the AI** - the reviewer AI examines the code and outputs a JSON verdict:
-   ```json
-   {"decision": "approve", "summary": "Tests pass, implementation complete", "issues": []}
-   ```
-4. **Updates the task** - either marks it `approved` or sends it back to `pending` with the rejection feedback attached
-
-## Phase 4: Retry or Complete
-
-After reviewers finish, the manager checks the task list:
-
-- If all tasks are `approved` or permanently `failed` (exceeded max retries), it's done
-- If there are tasks back in `pending` status (rejected by reviewers), the manager loops back to Phase 2, spawning new implementers. These implementers will see the previous review feedback in their prompt, so they know what to fix.
-
-The default max retries per task is 3. After 3 failed attempts, a task is marked `failed` permanently.
-
-## File-Based Coordination
-
-Everything is coordinated through files on disk. No network servers, no databases, no message queues.
-
-### Session isolation
-
-Each `ralph start` creates a git worktree at `<repo>-worktrees/ralph-<session_id>` on branch `ralph/<session_id>`. All work happens in this isolated directory. Session state (tasks, logs, config) is stored in `state/sessions/<session_id>/`.
-
-### Task files (`state/sessions/<id>/tasks/task-XXXX.json`)
-
-Each task is a JSON file:
-
-```json
-{
-  "id": "task-a1b2c3d4",
-  "title": "Implement GET /books endpoint",
-  "description": "Create a GET endpoint at /books that returns all books...",
-  "status": "pending",
-  "assignee": "",
-  "attempt_count": 0,
-  "max_retries": 3,
-  "depends_on": [],
-  "priority": "medium",
-  "created_at": "2025-01-15T10:30:00Z",
-  "updated_at": "2025-01-15T10:30:00Z",
-  "review_feedback": ""
-}
-```
-
-Task status flow:
+Each turn logs elapsed time so you can distinguish slow turns from stuck ones:
 
 ```
-pending --> in_progress --> completed --> review --> approved
-                                           |
-                                           v
-                                       (rejected)
-                                           |
-                                           v
-                                        pending  (with review_feedback set)
-                                           |
-                                         ... retry up to max_retries ...
-                                           |
-                                           v
-                                        failed  (permanently)
+[INFO]  Turn 3/10: Manager AI generating response...
+[INFO]  Manager (8s): **APPROVED** - Continue with the current plan...
+[INFO]  Turn 3/10: Resuming session...
+[INFO]  Turn 3/10: Complete (resume: 45s, total turn: 53s)
 ```
 
-### Agent registry (`state/sessions/<id>/agents/`)
+## Outer Loop (Retries)
 
-Each running agent registers itself with its process ID, role, and current task. The manager uses this to detect dead agents and respawn replacements.
+After the inner loop finishes (turns exhausted or completion detected):
 
-### Messages (`state/sessions/<id>/messages/`)
+1. The manager AI reads the actual `git diff` from the working directory
+2. It compares the diff against the original prompt requirements
+3. If all requirements are met, the session is complete
+4. If requirements are missing, a **fresh session** starts with a summary of what's incomplete
+5. This repeats up to `loop.max_iterations` times (default: 3)
 
-Agents can send messages to each other (e.g., "Task X completed" or "Task Y rejected"). The manager reads these to stay informed, though the primary coordination happens through task file status changes.
+```
+Attempt 1:
+  Turn 1: AI reads prompt, proposes plan     → Manager approves
+  Turn 2: AI implements code                  → Manager: "looks good, continue"
+  Turn 3: AI writes tests                     → Manager: "tests passing, complete"
+  → Verify git diff → "Missing input validation" → RETRY
 
-### Logs (`state/sessions/<id>/logs/`)
+Attempt 2:
+  Turn 1: Fresh session with: "Add input validation (missing from attempt 1)"
+  Turn 2: AI adds validation + tests          → Manager approves
+  → Verify git diff → "All requirements met"  → DONE
+```
 
-Every AI call's output is saved to a log file for debugging. Browse them interactively with `ralph sessions`.
+## Session Isolation
+
+Each `ralph start` creates a git worktree at `<repo>-worktrees/ralph-<session_id>` on branch `ralph/<session_id>`. All work happens in this isolated directory. Session state (logs, config) is stored in `state/sessions/<session_id>/`.
+
+## Logs
+
+Every AI turn's output is saved to a log file. Browse them interactively with `ralph sessions`.
+
+```
+state/sessions/<id>/logs/agent-teams/<id>/attempt-N/
+  turn-01.json        # Raw JSON output from AI
+  turn-01.log         # Human-readable output
+  manager-02.log      # Manager AI response
+  verification.log    # Manager AI diff verdict
+```
 
 ## The "Ralph Loop" Concept
 
-At its core, every agent runs the same basic pattern:
-
-```bash
-while not_done; do
-  cat prompt.md | ai_tool > output.log
-  check_if_done output.log
-  sleep 2
-done
-```
-
-The AI sees the same prompt each time, but the **codebase changes** between iterations because the AI modified files in the previous iteration. This is the self-referential feedback loop: the AI reads its own past work from the filesystem and improves on it.
+At its core, every session runs the same basic pattern: send a prompt, read the output, decide what to do next, repeat. The AI sees the codebase change between turns because it modified files in the previous turn. This is the self-referential feedback loop — the AI reads its own past work and improves on it.
 
 The prompt doesn't need to change because the context (the actual code on disk) changes. Ralph relies on the AI's ability to read files, notice what's done vs. what's missing, and make incremental progress.

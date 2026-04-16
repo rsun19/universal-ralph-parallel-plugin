@@ -46,7 +46,7 @@ Docs: [code.claude.com/docs/en/permissions](https://code.claude.com/docs/en/perm
 
 ### Interactive Agent Teams Mode
 
-All three tools support interactive agent teams, which is enabled by default (`"agent_teams": true` in `ralph.config.json`):
+All three tools support interactive agent teams:
 
 ```bash
 ralph start -p "Build auth with JWT"
@@ -57,7 +57,6 @@ Instead of one-shot `-p` calls, Ralph maintains a conversation across multiple t
 After the conversation turns are exhausted (or completion is detected), the manager AI verifies the actual `git diff` against the original requirements. If requirements aren't met, a fresh session is started with specific feedback.
 
 **Config keys:**
-- `agent_teams` — enable interactive agent teams (default: true, recommended)
 - `turns` — max conversation turns per attempt (default: 50)
 - `loop.max_iterations` — max retry attempts (default: 3)
 - `manager_model` — model for the manager AI (default: sonnet, cheaper is recommended)
@@ -88,8 +87,6 @@ ralph start -p "Build a REST API for todos with CRUD, validation, and tests"
 - Sets the AI command to `agent --model <model> -p`
 - `-p` means "read the prompt from stdin and print the result" (non-interactive)
 - `--model` selects the model (sonnet, opus, gpt-4.1, etc.)
-
-> **Note:** Agent teams (`agent_teams: true`) is the recommended and actively maintained mode. The legacy bash orchestrator is not maintained and may be broken.
 
 ### Parallel sessions
 
@@ -148,8 +145,6 @@ ralph start -p "Build a REST API for todos with CRUD, validation, and tests"
 - `--allow-all` skips all permission prompts (always included — see note below)
 - `-p` means "read the prompt from stdin and print the result" (non-interactive)
 - `--model` selects the model (sonnet, opus, gpt-4.1, etc.)
-
-> **Note:** Agent teams (`agent_teams: true`) is the recommended and actively maintained mode. The legacy bash orchestrator is not maintained and may be broken.
 
 ### Permissions
 

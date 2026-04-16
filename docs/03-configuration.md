@@ -16,24 +16,14 @@ Settings live in `ralph.config.json`, which is created when you run `ralph init`
   "turns": 50,
   "team": {
     "implementers": 3,
-    "reviewers": 2,
-    "max_retries_per_task": 3
+    "reviewers": 2
   },
   "loop": {
     "max_iterations": 3,
-    "completion_promise": "ALL_TASKS_COMPLETE",
-    "commit_on_success": true,
-    "pause_between_iterations_sec": 2
+    "completion_promise": "ALL_TASKS_COMPLETE"
   },
-  "agent_teams": true,
   "claude_teams": {
     "teammate_mode": "in-process"
-  },
-  "review": {
-    "check_tests": true,
-    "check_placeholders": true,
-    "check_spec_compliance": true,
-    "auto_approve_on_pass": false
   }
 }
 ```
@@ -121,7 +111,7 @@ A cheaper/faster model is recommended here since the manager only needs to make 
 
 ### `turns`
 
-**What it does:** Maximum number of conversation turns per attempt in interactive session mode (`agent_teams: true`). Each turn is one message exchange between Ralph and the AI.
+**What it does:** Maximum number of conversation turns per attempt. Each turn is one message exchange between Ralph and the AI.
 
 **Default:** `50`
 
@@ -155,23 +145,13 @@ Reviewers run after implementers finish. They check code quality, test coverage,
 
 ---
 
-### `team.max_retries_per_task`
-
-**What it does:** Maximum number of times a task can be retried after being rejected by a reviewer.
-
-**Default:** `3`
-
-When a reviewer rejects a task, it goes back to `pending` with the rejection feedback attached. The next implementer that picks it up will see the feedback. After this many total attempts, the task is marked `failed` permanently.
-
----
-
 ### `loop.max_iterations`
 
-**What it does:** In **bash orchestration mode** (legacy, may be broken), this is the maximum number of AI calls per agent per task. In **interactive session mode** (recommended), this is the maximum number of retry attempts if the manager AI determines requirements aren't fully met after reading the git diff.
+**What it does:** Maximum number of retry attempts if the manager AI determines requirements aren't fully met after reading the git diff.
 
 **Default:** `3`
 
-In bash mode, this is a safety limit per worker. In interactive mode, this is the outer loop bound — each retry starts a fresh session with specific feedback about what's missing.
+This is the outer loop bound — each retry starts a fresh session with specific feedback about what's missing.
 
 **CLI override:** `-m 5` or `--max-iterations 5`
 
@@ -183,43 +163,7 @@ In bash mode, this is a safety limit per worker. In interactive mode, this is th
 
 **Default:** `"ALL_TASKS_COMPLETE"`
 
-Individual task completions use `"TASK_DONE"` instead (hardcoded in the worker).
-
 **CLI override:** `--completion-promise "FINISHED"`
-
----
-
-### `loop.commit_on_success`
-
-**What it does:** Whether to automatically `git add -A && git commit` after each task is completed.
-
-**Default:** `true`
-
-Each commit message includes the task title and ID, making it easy to trace which Ralph task produced which changes.
-
----
-
-### `loop.pause_between_iterations_sec`
-
-**What it does:** Seconds to pause between AI iterations within a single task loop.
-
-**Default:** `2`
-
-Prevents hammering the AI API too aggressively. Increase if you're hitting rate limits.
-
----
-
-### `agent_teams`
-
-**What it does:** Whether to use interactive agent teams mode instead of legacy bash orchestration. Works with all supported AI tools (Claude Code, Cursor, Copilot). When set to `true` in your config, you do not need to pass `--agent-teams` on the command line.
-
-**Default:** `true` (recommended)
-
-> **Recommended:** Keep this enabled. The legacy bash orchestrator is not actively maintained and may be broken.
-
-When `true`, Ralph runs a multi-turn interactive session where the AI spawns parallel sub-agents internally. A manager AI (configured via `manager_model`) responds on the user's behalf between turns, approving plans and providing guidance. After each attempt, the manager AI verifies the git diff against requirements. See [Agent Teams](06-claude-teams.md).
-
-**CLI override:** `--agent-teams` (or `--claude-teams` for backward compat)
 
 ---
 
@@ -230,38 +174,6 @@ When `true`, Ralph runs a multi-turn interactive session where the AI spawns par
 **Default:** `"in-process"`
 
 **Options:** `"in-process"` (all in one terminal, use Shift+Down to cycle) or `"tmux"` (separate panes per teammate).
-
----
-
-### `review.check_tests`
-
-**What it does:** Whether reviewers should verify that tests exist and pass.
-
-**Default:** `true`
-
----
-
-### `review.check_placeholders`
-
-**What it does:** Whether reviewers should search for TODO, FIXME, stub, and placeholder patterns.
-
-**Default:** `true`
-
----
-
-### `review.check_spec_compliance`
-
-**What it does:** Whether reviewers should verify the implementation matches the task description.
-
-**Default:** `true`
-
----
-
-### `review.auto_approve_on_pass`
-
-**What it does:** If `true`, tasks that pass all automated checks are approved without a full AI review.
-
-**Default:** `false`
 
 ## CLI flags quick reference
 
@@ -277,10 +189,9 @@ When `true`, Ralph runs a multi-turn interactive session where the AI spawns par
 | `-R, --reviewers` | `team.reviewers` | `-R 3` |
 | `-m, --max-iterations` | `loop.max_iterations` | `-m 5` |
 | `--completion-promise` | `loop.completion_promise` | `--completion-promise DONE` |
-| `--agent-teams` | `agent_teams` | `--agent-teams` |
 | `--allow-all` | `allow_all` | `--allow-all` |
 
-CLI flags override config file values. The effective config is written to the session directory so you can inspect what was actually used. If `agent_teams` is already `true` in your config, you can omit `--agent-teams` from the command line.
+CLI flags override config file values. The effective config is written to the session directory so you can inspect what was actually used.
 
 > **Session-only flags:** `--repo`, `--cli`, and `--model` override the target repo, AI tool, and model for a single session without changing `ralph.config.json`. When `--cli` changes the tool, Ralph auto-prompts for model selection (skip with `--model`).
 
@@ -300,6 +211,6 @@ Ralph uses prompt templates to instruct agents. Editable copies are stored in `s
 
 ```bash
 ralph templates              # List all templates
-ralph templates prompt-implement.md  # Edit a template
+ralph templates prompt-team.md  # Edit a template
 ralph templates --reset      # Reset all to defaults
 ```
