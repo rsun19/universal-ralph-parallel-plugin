@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "target_repo": ".",
+  "default_target_repo": ".",
   "prompt_text": "",
   "ai_tool": "claude-code",
   "ai_tool_command": "claude -p",
@@ -20,7 +20,7 @@
     "commit_on_success": true,
     "pause_between_iterations_sec": 2
   },
-  "agent_teams": false,
+  "agent_teams": true,
   "claude_teams": {
     "teammate_mode": "in-process"
   },

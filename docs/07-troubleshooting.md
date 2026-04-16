@@ -131,11 +131,11 @@ Ralph needs the AI tool to run without interactive approval prompts. You have tw
 
 Copilot CLI does not support config-file-based permissions, so `--allow-all` is always included in the Copilot adapter by default.
 
-### Cursor sessions hang when running in parallel
+### Session appears stuck (no progress for 10+ minutes)
 
-Cursor's `agent` CLI is tied to a single IDE backend per window. Ralph automatically opens each worktree in its own Cursor window, but if this doesn't work (e.g., `cursor` CLI not in PATH), the second session will block until the first finishes.
+Each turn now logs elapsed time. If you see "Resuming session..." with no "Complete" line for 10+ minutes, the API call is genuinely hung — not just slow.
 
-**Fix:** Ensure the `cursor` command is available in your terminal. Run `cursor --version` to check.
+**Fix:** `Ctrl-C` the hung session and restart. Normal turns complete in 30-120 seconds.
 
 ## Inspecting state
 

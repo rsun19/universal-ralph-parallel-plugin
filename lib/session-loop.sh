@@ -86,6 +86,37 @@ extract_text() {
 }
 
 # ---------------------------------------------------------------------------
+# check_api_error — Detect fatal API errors in turn output.
+#   Args: turn_text
+#   Returns 0 if a fatal error is detected, 1 otherwise.
+#   Prints the error message to stderr.
+# ---------------------------------------------------------------------------
+check_api_error() {
+  local text="$1"
+  local error_pattern
+
+  for error_pattern in \
+    "API Error: 4" \
+    "API Error: 5" \
+    "error.*was not found" \
+    "model.*not found" \
+    "does not have access" \
+    "authentication failed" \
+    "invalid.*api.key" \
+    "rate limit exceeded" \
+    "quota exceeded" \
+    "PERMISSION_DENIED" \
+    "UNAUTHENTICATED" \
+    "NOT_FOUND" \
+  ; do
+    if echo "$text" | grep -qiE "$error_pattern" 2>/dev/null; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+# ---------------------------------------------------------------------------
 # manager_respond — Ask the manager AI what to say next
 #   Args: manager_cmd  session_output  original_prompt  plan_text  target_dir
 #   Prints the manager's response to stdout.
@@ -260,19 +291,66 @@ Please address these specific gaps in addition to the original requirements."
     ralph_log INFO "  Turn ${turn}/${max_turns}: Starting session..."
     local turn_output="${attempt_dir}/turn-$(printf '%02d' $turn).json"
 
+    local t_start=$SECONDS
     session_id=$(session_start "$initial_cmd" "$effective_prompt" "$target_dir" "$turn_output") || true
-    ralph_log INFO "  Session ID: ${session_id:-<none>}"
+    local t_elapsed=$(( SECONDS - t_start ))
+
+    if [[ -z "$session_id" ]]; then
+      ralph_log ERROR "  Failed to start AI session (${t_elapsed}s). No session ID returned."
+      ralph_log ERROR ""
+      ralph_log ERROR "  Possible causes:"
+      ralph_log ERROR "    - The AI tool command failed or isn't installed"
+      ralph_log ERROR "    - The model is not supported by the configured tool"
+      ralph_log ERROR "    - The AI tool returned an error instead of JSON"
+      ralph_log ERROR ""
+      ralph_log ERROR "  AI tool: ${ai_tool}"
+      ralph_log ERROR "  Command: ${initial_cmd}"
+      ralph_log ERROR ""
+      if [[ -f "$turn_output" ]]; then
+        local err_output
+        err_output=$(head -c 500 "$turn_output")
+        if [[ -n "$err_output" ]]; then
+          ralph_log ERROR "  Output from AI tool:"
+          ralph_log ERROR "  ---"
+          echo "$err_output" | while IFS= read -r line; do
+            ralph_log ERROR "  $line"
+          done
+          ralph_log ERROR "  ---"
+        fi
+      fi
+      ralph_log ERROR ""
+      ralph_log ERROR "  Try: ralph start --cli claude-code --model sonnet"
+      return 1
+    fi
+
+    ralph_log INFO "  Session ID: ${session_id}  (${t_elapsed}s)"
 
     local turn_text
     turn_text=$(extract_text "$turn_output")
+
+    # Save human-readable log
+    echo "$turn_text" > "${attempt_dir}/turn-$(printf '%02d' $turn).log"
+
+    # Check for fatal API errors
+    if check_api_error "$turn_text"; then
+      ralph_log ERROR "  Fatal API error detected on turn ${turn}. Aborting session."
+      ralph_log ERROR ""
+      echo "$turn_text" | head -5 | while IFS= read -r line; do
+        ralph_log ERROR "  $line"
+      done
+      ralph_log ERROR ""
+      ralph_log ERROR "  Check your model and tool configuration:"
+      ralph_log ERROR "    AI tool: ${ai_tool}"
+      ralph_log ERROR "    Model:   ${model}"
+      ralph_log ERROR ""
+      ralph_log ERROR "  Try: ralph start --model sonnet"
+      return 1
+    fi
 
     # Capture the plan from turn 1 for verification later
     if [[ $attempt -eq 1 ]]; then
       plan_text="$turn_text"
     fi
-
-    # Save human-readable log
-    echo "$turn_text" > "${attempt_dir}/turn-$(printf '%02d' $turn).log"
 
     # Check completion promise
     if [[ -n "$completion_promise" ]] && echo "$turn_text" | grep -qF "$completion_promise" 2>/dev/null; then
@@ -290,11 +368,13 @@ Please address these specific gaps in addition to the original requirements."
       fi
 
       # Ask manager AI what to say
+      local t_mgr=$SECONDS
       ralph_log INFO "  Turn ${turn}/${max_turns}: Manager AI generating response..."
       local mgr_response
       mgr_response=$(manager_respond "$manager_cmd" "$turn_text" "$original_prompt" "$plan_text" "$target_dir")
+      local t_mgr_elapsed=$(( SECONDS - t_mgr ))
       echo "$mgr_response" > "${attempt_dir}/manager-$(printf '%02d' $turn).log"
-      ralph_log INFO "  Manager: $(echo "$mgr_response" | head -1 | cut -c1-80)..."
+      ralph_log INFO "  Manager (${t_mgr_elapsed}s): $(echo "$mgr_response" | head -1 | cut -c1-80)..."
 
       # Resume session with manager's response
       local resume_cmd
@@ -305,11 +385,30 @@ Please address these specific gaps in addition to the original requirements."
       fi
 
       turn_output="${attempt_dir}/turn-$(printf '%02d' $turn).json"
+      local t_resume=$SECONDS
       ralph_log INFO "  Turn ${turn}/${max_turns}: Resuming session..."
       session_resume "$resume_cmd" "$mgr_response" "$target_dir" "$turn_output" || true
+      local t_resume_elapsed=$(( SECONDS - t_resume ))
+      ralph_log INFO "  Turn ${turn}/${max_turns}: Complete (resume: ${t_resume_elapsed}s, total turn: $(( t_mgr_elapsed + t_resume_elapsed ))s)"
 
       turn_text=$(extract_text "$turn_output")
       echo "$turn_text" > "${attempt_dir}/turn-$(printf '%02d' $turn).log"
+
+      # Check for fatal API errors
+      if check_api_error "$turn_text"; then
+        ralph_log ERROR "  Fatal API error detected on turn ${turn}. Aborting session."
+        ralph_log ERROR ""
+        echo "$turn_text" | head -5 | while IFS= read -r line; do
+          ralph_log ERROR "  $line"
+        done
+        ralph_log ERROR ""
+        ralph_log ERROR "  Check your model and tool configuration:"
+        ralph_log ERROR "    AI tool: ${ai_tool}"
+        ralph_log ERROR "    Model:   ${model}"
+        ralph_log ERROR ""
+        ralph_log ERROR "  Try: ralph start --model sonnet"
+        return 1
+      fi
 
       # Check completion promise
       if [[ -n "$completion_promise" ]] && echo "$turn_text" | grep -qF "$completion_promise" 2>/dev/null; then

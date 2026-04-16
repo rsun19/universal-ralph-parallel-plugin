@@ -2,8 +2,10 @@
 
 This plugin has two modes for running agent teams:
 
-1. **Bash orchestration** (default): Ralph spawns separate CLI processes itself, coordinating through files on disk
-2. **Interactive session mode**: Ralph runs a multi-turn session where the AI spawns parallel sub-agents, and a manager AI approves plans and provides guidance on the user's behalf
+1. **Bash orchestration** (legacy): Ralph spawns separate CLI processes itself, coordinating through files on disk
+2. **Interactive session mode** (recommended): Ralph runs a multi-turn session where the AI spawns parallel sub-agents, and a manager AI approves plans and provides guidance on the user's behalf
+
+Interactive session mode is the recommended and actively maintained mode. The legacy bash orchestrator is not maintained and may be broken.
 
 This document covers the interactive session mode, which works with **all supported tools** (Claude Code, Cursor, Copilot).
 
@@ -18,7 +20,7 @@ As all major CLIs converge on this capability, Ralph's interactive session mode 
 
 ## Enabling Agent Teams
 
-In `ralph.config.json`:
+Agent teams is enabled by default in `ralph.config.json`:
 
 ```json
 {
@@ -28,7 +30,7 @@ In `ralph.config.json`:
 }
 ```
 
-Or use the CLI flag:
+You can also enable it via the CLI flag if it's not set in your config:
 
 ```bash
 ralph start -p PROMPT.md --agent-teams
@@ -142,7 +144,9 @@ Or globally in `~/.claude.json`:
 
 ## Bash orchestration vs. interactive session mode
 
-| Aspect | Bash orchestration | Interactive session |
+Bash orchestration mode is legacy and not actively maintained. It may be broken. Use interactive session mode (`agent_teams: true`) for reliable operation.
+
+| Aspect | Bash orchestration (legacy) | Interactive session (recommended) |
 |--------|-------------------|-------------------|
 | Who orchestrates | Ralph bash scripts | AI orchestrates team; Ralph manages conversation |
 | How agents run | Separate shell processes (true OS parallelism) | AI spawns sub-agents internally |
@@ -154,9 +158,9 @@ Or globally in `~/.claude.json`:
 | Cost | N one-shot calls | Many turns + manager AI calls (higher) |
 | Monitoring | `ralph sessions` (task list) | `ralph sessions` (per-turn/per-attempt logs) |
 
-**Use bash orchestration** when you want full mechanical control, isolated workers, or maximum parallelism.
+**Use interactive session mode** (recommended) for intelligent team coordination with shared context, automated plan approval, and requirement verification.
 
-**Use interactive session mode** when you want intelligent team coordination with shared context, automated plan approval, and requirement verification.
+Bash orchestration mode is legacy and not actively maintained.
 
 ## Hooks
 

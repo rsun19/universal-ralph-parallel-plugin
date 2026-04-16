@@ -7,7 +7,7 @@ Settings live in `ralph.config.json`, which is created when you run `ralph init`
 ```json
 {
   "version": "1.0.0",
-  "target_repo": ".",
+  "default_target_repo": ".",
   "prompt_text": "",
   "ai_tool": "claude-code",
   "ai_tool_command": "claude -p",
@@ -25,7 +25,7 @@ Settings live in `ralph.config.json`, which is created when you run `ralph init`
     "commit_on_success": true,
     "pause_between_iterations_sec": 2
   },
-  "agent_teams": false,
+  "agent_teams": true,
   "claude_teams": {
     "teammate_mode": "in-process"
   },
@@ -40,9 +40,9 @@ Settings live in `ralph.config.json`, which is created when you run `ralph init`
 
 ## Settings explained
 
-### `target_repo`
+### `default_target_repo`
 
-**What it does:** The path to the project repository that Ralph will work on.
+**What it does:** The default project repository that Ralph will work on. This is used unless overridden at session start time via `--repo`.
 
 **Default:** `"."` (current directory)
 
@@ -50,7 +50,7 @@ Settings live in `ralph.config.json`, which is created when you run `ralph init`
 
 All AI agents `cd` into this directory before running. This is where code gets written, tests get run, and git commits happen.
 
-**CLI override:** `-r /path/to/repo` or `--repo /path/to/repo`
+**Per-session override:** Use `--repo /path/to/repo` to target a different repository for a single session without changing the default. Use `--repo` (no path) to interactively scan and pick a repository. Neither changes `ralph.config.json`.
 
 ---
 
@@ -167,7 +167,7 @@ When a reviewer rejects a task, it goes back to `pending` with the rejection fee
 
 ### `loop.max_iterations`
 
-**What it does:** In **bash orchestration mode**, this is the maximum number of AI calls per agent per task. In **interactive session mode**, this is the maximum number of retry attempts if the manager AI determines requirements aren't fully met after reading the git diff.
+**What it does:** In **bash orchestration mode** (legacy, may be broken), this is the maximum number of AI calls per agent per task. In **interactive session mode** (recommended), this is the maximum number of retry attempts if the manager AI determines requirements aren't fully met after reading the git diff.
 
 **Default:** `3`
 
@@ -211,9 +211,11 @@ Prevents hammering the AI API too aggressively. Increase if you're hitting rate 
 
 ### `agent_teams`
 
-**What it does:** Whether to use interactive agent teams mode instead of shell-based parallelism. Works with all supported AI tools (Claude Code, Cursor, Copilot).
+**What it does:** Whether to use interactive agent teams mode instead of legacy bash orchestration. Works with all supported AI tools (Claude Code, Cursor, Copilot). When set to `true` in your config, you do not need to pass `--agent-teams` on the command line.
 
-**Default:** `false`
+**Default:** `true` (recommended)
+
+> **Recommended:** Keep this enabled. The legacy bash orchestrator is not actively maintained and may be broken.
 
 When `true`, Ralph runs a multi-turn interactive session where the AI spawns parallel sub-agents internally. A manager AI (configured via `manager_model`) responds on the user's behalf between turns, approving plans and providing guidance. After each attempt, the manager AI verifies the git diff against requirements. See [Agent Teams](06-claude-teams.md).
 
@@ -266,8 +268,10 @@ When `true`, Ralph runs a multi-turn interactive session where the AI spawns par
 | Flag | Config key | Example |
 |------|-----------|---------|
 | `-c, --config` | (file path) | `-c my-config.json` |
-| `-r, --repo` | `target_repo` | `-r /path/to/project` |
-| `-t, --tool` | `ai_tool` | `-t cursor` |
+| `-r, --repo` | (session override) | `-r /path/to/project` or `--repo` |
+| `--cli` | (session override) | `--cli claude-code` or `--cli` |
+| `--model` | (session override) | `--model opus` |
+| `-t, --tool` | `ai_tool` (permanent) | `-t cursor` |
 | `-p, --prompt` | `prompt_file` | `-p PROMPT.md` |
 | `-n, --implementers` | `team.implementers` | `-n 5` |
 | `-R, --reviewers` | `team.reviewers` | `-R 3` |
@@ -276,7 +280,9 @@ When `true`, Ralph runs a multi-turn interactive session where the AI spawns par
 | `--agent-teams` | `agent_teams` | `--agent-teams` |
 | `--allow-all` | `allow_all` | `--allow-all` |
 
-CLI flags override config file values. The effective config is written to the session directory so you can inspect what was actually used.
+CLI flags override config file values. The effective config is written to the session directory so you can inspect what was actually used. If `agent_teams` is already `true` in your config, you can omit `--agent-teams` from the command line.
+
+> **Session-only flags:** `--repo`, `--cli`, and `--model` override the target repo, AI tool, and model for a single session without changing `ralph.config.json`. When `--cli` changes the tool, Ralph auto-prompts for model selection (skip with `--model`).
 
 ## Switching tools and models
 
