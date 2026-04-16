@@ -66,10 +66,8 @@ Options:
   -p, --prompt <text|file> Prompt: inline text OR path to a .md file
   -n, --implementers <n> Number of implementer agents (default: 3)
   -R, --reviewers <n>    Number of reviewer agents (default: 2)
-  -m, --max-iterations   Max loop iterations per agent (default: 50)
+  -m, --max-iterations   Max retry attempts (default: 3)
   --completion-promise    Phrase that signals task completion
-  --agent-teams           Use interactive agent teams (multi-turn session mode)
-  --claude-teams          Alias for --agent-teams (backward compat)
   --allow-all             Skip all permission prompts in the AI tool
   -h, --help              Show this help
 
@@ -161,7 +159,7 @@ main() {
       --completion-promise)
         config_overrides+=("loop.completion_promise=$2"); shift 2 ;;
       --claude-teams|--agent-teams)
-        config_overrides+=("agent_teams=true"); shift ;;
+        shift ;;
       --allow-all)
         config_overrides+=("allow_all=true"); shift ;;
       -h|--help)
@@ -535,7 +533,7 @@ cmd_start() {
   prompt_file=$(resolve_prompt "$prompt_input" "$config") || \
     ralph_die "Prompt required. Use -p \"your prompt\" or -p file.md"
 
-  local target_repo ai_tool agent_teams
+  local target_repo ai_tool
 
   # Determine target repo: --repo flag > config default
   local session_target_repo
@@ -601,12 +599,6 @@ cmd_start() {
     session_tool_command=$(_build_tool_command "$ai_tool" "$model")
   fi
 
-  # Support both new "agent_teams" key and legacy "claude_teams.enabled"
-  agent_teams=$(config_get "$config" '.agent_teams' '')
-  if [[ -z "$agent_teams" ]]; then
-    agent_teams=$(config_get "$config" '.claude_teams.enabled' 'false')
-  fi
-
   # Resolve target repo to absolute path
   if [[ "$target_repo" != /* ]]; then
     target_repo="$(cd "$target_repo" 2>/dev/null && pwd)" || ralph_die "Target repo not found: $target_repo"
@@ -623,7 +615,7 @@ cmd_start() {
   export RALPH_SESSION_ID="$session_id"
 
   local session_dir="${RALPH_ROOT}/state/sessions/${session_id}"
-  mkdir -p "$session_dir"/{tasks,agents,messages,logs,prompts}
+  mkdir -p "$session_dir"/{logs,prompts}
   export RALPH_SESSION_DIR="$session_dir"
 
   local original_target_repo="$target_repo"
@@ -686,15 +678,10 @@ cmd_start() {
   ralph_log INFO "  Target repo: $target_repo"
   ralph_log INFO "  AI tool: $ai_tool"
   ralph_log INFO "  Prompt: $prompt_file"
-  ralph_log INFO "  Agent Teams (interactive): $agent_teams"
 
-  if [[ "$agent_teams" == "true" ]]; then
-    ralph_log INFO "Starting interactive agent teams session (works with any AI tool)..."
-    ralph_log INFO "  Use 'ralph sessions' to see per-turn progress."
-    exec "${RALPH_ROOT}/bin/ralph-interactive.sh" "$config" "$prompt_file"
-  else
-    exec "${RALPH_ROOT}/bin/ralph-manager.sh" "$config" "$prompt_file"
-  fi
+  ralph_log INFO "Starting interactive agent teams session (works with any AI tool)..."
+  ralph_log INFO "  Use 'ralph sessions' to see per-turn progress."
+  exec "${RALPH_ROOT}/bin/ralph-interactive.sh" "$config" "$prompt_file"
 }
 
 cmd_init() {
@@ -880,21 +867,7 @@ cmd_init() {
 
   echo ""
 
-  # --- Step 6: Agent Teams (interactive session mode) ---
-  local agent_teams="true"
-  echo "  Agent Teams (recommended): interactive multi-turn session with manager AI."
-  echo "  The AI spawns parallel sub-agents and a manager AI approves their work."
-  echo "  Works with all supported tools (Claude Code, Cursor, Copilot)."
-  echo "  The legacy bash orchestrator is not maintained and may be broken."
-  echo ""
-  printf "  Enable Agent Teams? [Y/n]: "
-  read -r at
-  if [[ "$at" == "n" ]] || [[ "$at" == "N" ]]; then
-    agent_teams="false"
-  fi
-  echo ""
-
-  # --- Step 7: Allow all permissions ---
+  # --- Step 6: Allow all permissions ---
   local allow_all="false"
   if [[ "$ai_tool" == "copilot" ]]; then
     allow_all="true"
@@ -943,30 +916,20 @@ cmd_init() {
   "turns": ${max_turns},
   "team": {
     "implementers": ${n_impl},
-    "reviewers": ${n_rev},
-    "max_retries_per_task": 3
+    "reviewers": ${n_rev}
   },
   "loop": {
     "max_iterations": ${max_iter},
-    "completion_promise": "ALL_TASKS_COMPLETE",
-    "commit_on_success": true,
-    "pause_between_iterations_sec": 2
+    "completion_promise": "ALL_TASKS_COMPLETE"
   },
-  "agent_teams": ${agent_teams},
   "claude_teams": {
     "teammate_mode": "in-process"
-  },
-  "review": {
-    "check_tests": true,
-    "check_placeholders": true,
-    "check_spec_compliance": true,
-    "auto_approve_on_pass": false
   }
 }
 CONFIGEOF
 
   ralph_log INFO "Config saved to: $config_file"
-  mkdir -p "${RALPH_ROOT}/state"/{tasks,agents,messages,logs,prompts}
+  mkdir -p "${RALPH_ROOT}/state"/{logs,prompts}
   sync_templates "$RALPH_ROOT"
 
   echo ""
@@ -1271,18 +1234,13 @@ cmd_cancel() {
 
   source "${RALPH_ROOT}/lib/agent-registry.sh"
 
-  local _state_dir="${RALPH_SESSION_DIR:-${RALPH_ROOT}/state}"
   init_agent_dir "$RALPH_ROOT"
 
   ralph_log INFO "Cancelling all Ralph agents..."
   agent_kill_all
-  
-  # Clean up state
-  rm -f "${_state_dir}/tasks"/*.lock 2>/dev/null || true
-  rm -f "${_state_dir}/messages"/*.json 2>/dev/null || true
 
-  ralph_log INFO "All agents cancelled. Task state preserved for inspection."
-  ralph_log INFO "Run 'ralph sessions' to see final task states."
+  ralph_log INFO "All agents cancelled."
+  ralph_log INFO "Run 'ralph sessions' to see session states."
 }
 
 _logs_browse_runs() {
@@ -1507,9 +1465,6 @@ cmd_prune() {
   echo "This will permanently delete all Ralph state:"
   echo "  - Sessions      ($session_count session(s) with worktrees)"
   echo "  - Logs          (state/logs/)"
-  echo "  - Tasks         (state/tasks/)"
-  echo "  - Messages      (state/messages/)"
-  echo "  - Agents        (state/agents/)"
   echo "  - Prompts       (state/prompts/)"
   echo ""
   echo "  Tip: prune a single session with 'ralph prune --session <id>'"
@@ -1531,7 +1486,7 @@ cmd_prune() {
   fi
 
   rm -rf "$state_dir"
-  mkdir -p "$state_dir"/{tasks,messages,agents,prompts}
+  mkdir -p "$state_dir"/{logs,prompts}
 
   ralph_log INFO "State wiped. Ralph is back to factory fresh."
 }
@@ -1613,11 +1568,8 @@ cmd_templates() {
     name=$(basename "$f")
     local desc=""
     case "$name" in
-      prompt-team.md)              desc="Team orchestration prompt (agent teams mode)" ;;
+      prompt-team.md)              desc="Team orchestration prompt" ;;
       prompt-plan.md)              desc="Planning / task breakdown prompt" ;;
-      prompt-implement.md)         desc="Implementer agent prompt" ;;
-      prompt-review.md)            desc="Reviewer agent prompt" ;;
-      prompt-manager.md)           desc="Manager agent prompt (multi-worker mode)" ;;
       prompt-manager-respond.md)   desc="Manager turn-by-turn response prompt" ;;
       prompt-verify.md)            desc="Completion verification prompt" ;;
       *)                           desc="" ;;

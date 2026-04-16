@@ -98,8 +98,6 @@ ralph start --model opus -p "Write integration tests"
 
 Each session works independently — different worktree, different branch, no conflicts. When done, merge whichever branches you want.
 
-> **Cursor limitation:** Cursor's CLI does not support parallel sessions. Ralph will warn you if it detects an active Cursor session. Use `--cli claude-code` for additional parallel sessions.
-
 ### Monitoring and managing sessions
 
 ```bash
@@ -193,7 +191,6 @@ Config flags (apply to all future runs):
   -n, --implementers <n>  Number of implementer agents
   -R, --reviewers <n>     Number of reviewer agents
   -m, --max-iterations    Max retry attempts
-  --agent-teams           Enable interactive agent teams mode
   --allow-all             Skip all AI tool permission prompts
   -c, --config <file>     Use a different config file
 ```
@@ -210,14 +207,10 @@ Config flags (apply to all future runs):
 | `model` | Model for worker agents | `sonnet` |
 | `manager_model` | Model for the manager AI | `sonnet` |
 | `turns` | Max conversation turns per attempt | `50` |
-| `agent_teams` | Enable interactive session mode (recommended) | `true` |
 | `team.implementers` | Parallel implementer agents | `3` |
 | `team.reviewers` | Parallel reviewer agents | `2` |
 | `loop.max_iterations` | Max retry attempts | `3` |
 | `loop.completion_promise` | Phrase signaling task completion | `ALL_TASKS_COMPLETE` |
-| `loop.commit_on_success` | Auto-commit on completion | `true` |
-
-> **Recommended:** `"agent_teams": true` should be enabled. This is the actively maintained mode — the legacy bash orchestrator is not maintained and may be broken.
 
 ## Session Isolation
 
@@ -253,7 +246,7 @@ Ralph uses markdown templates to instruct its agents. You can customize them:
 ralph templates
 
 # Edit a specific template
-ralph templates prompt-implement.md
+ralph templates prompt-team.md
 
 # Reset all templates to defaults
 ralph templates --reset
@@ -336,11 +329,11 @@ debug any failures, refactor, repeat until all green.
 | Doc | What it covers |
 |-----|---------------|
 | [Getting Started](docs/01-getting-started.md) | Install, setup, first run |
-| [How It Works](docs/02-how-it-works.md) | Full lifecycle: plan, implement, review, retry |
+| [How It Works](docs/02-how-it-works.md) | Full lifecycle: turns, retries, verification |
 | [Configuration](docs/03-configuration.md) | Every setting explained |
 | [AI Tools](docs/04-ai-tools.md) | Setup for Claude Code, Cursor, Copilot |
 | [Writing Prompts](docs/05-writing-prompts.md) | Prompts that get results |
-| [Agent Teams](docs/06-claude-teams.md) | Interactive session mode details |
+| [Agent Teams](docs/06-claude-teams.md) | Interactive session mode and subagent definitions |
 | [Troubleshooting](docs/07-troubleshooting.md) | Common issues and fixes |
 | [Project Structure](docs/08-project-structure.md) | Every file and directory |
 

@@ -6,7 +6,7 @@ This guide walks you through everything from installation to running your first 
 
 Ralph Wiggum is a system that makes AI coding tools work **in a loop**. Instead of asking an AI to build something once, Ralph asks it over and over, and the AI improves its work each time by reading what it already wrote on disk.
 
-On top of that basic loop, this plugin adds **teams**: a manager agent breaks your task into pieces, several implementer agents work on those pieces in parallel, and reviewer agents check the quality of each piece. If a reviewer rejects something, it goes back to an implementer to fix.
+On top of that basic loop, this plugin adds **teams**: the AI spawns parallel sub-agents to work on different parts of the task simultaneously, and a manager AI approves plans and provides guidance between turns.
 
 ## Prerequisites
 
@@ -123,17 +123,15 @@ ralph start -p detailed-spec.md
 
 That's it. Ralph will:
 1. Create an isolated git worktree and branch for this session
-2. Ask the AI to read your prompt and break it into subtasks
-3. Launch 3 implementer agents in parallel to work on those subtasks
-4. Launch 2 reviewer agents to check completed work
-5. Retry anything that gets rejected
-6. Print a completion report with instructions to merge the worktree back
+2. Send your prompt to the AI, which breaks it into subtasks and spawns sub-agents
+3. A manager AI approves plans and answers questions between turns
+4. Verify the git diff against your requirements and retry if needed
+5. Print a completion report with instructions to merge the worktree back
 
 ## What to expect
 
 - **It takes time.** Each agent runs AI calls in a loop. A full run can take 30 minutes to several hours depending on task complexity.
-- **It uses tokens.** Each agent has its own AI session. With 3 implementers + 2 reviewers, you're running 5 parallel AI sessions plus the manager. Budget accordingly.
-- **It commits to git.** By default, Ralph commits after each successful task. You can disable this with `"commit_on_success": false` in your config.
+- **It uses tokens.** Each session runs multiple AI turns plus manager AI calls. Budget accordingly.
 - **It's not perfect.** Ralph is "deterministically bad" - it makes mistakes, but they're predictable and fixable through more iterations.
 
 ## Monitoring progress
@@ -212,8 +210,6 @@ ralph start --repo /path/to/other-project -p "Build the payment integration"
 # Terminal 3 (different tool and model)
 ralph start --cli claude-code --model opus -p "Write integration tests"
 ```
-
-> **Note:** Cursor's `agent` CLI does not support parallel sessions. Use `--cli claude-code` for additional sessions if your default is Cursor. Claude Code and Copilot support full parallelism natively.
 
 ## Finding repos (scan)
 

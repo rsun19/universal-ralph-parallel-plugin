@@ -1,13 +1,8 @@
 # Agent Teams (Interactive Session Mode)
 
-This plugin has two modes for running agent teams:
+Ralph runs an interactive multi-turn session where the AI spawns parallel sub-agents, and a manager AI approves plans and provides guidance on the user's behalf.
 
-1. **Bash orchestration** (legacy): Ralph spawns separate CLI processes itself, coordinating through files on disk
-2. **Interactive session mode** (recommended): Ralph runs a multi-turn session where the AI spawns parallel sub-agents, and a manager AI approves plans and provides guidance on the user's behalf
-
-Interactive session mode is the recommended and actively maintained mode. The legacy bash orchestrator is not maintained and may be broken.
-
-This document covers the interactive session mode, which works with **all supported tools** (Claude Code, Cursor, Copilot).
+This works with **all supported tools** (Claude Code, Cursor, Copilot).
 
 ## What are Agent Teams?
 
@@ -16,24 +11,17 @@ Modern AI coding CLIs support spawning parallel sub-agents from a single session
 - **Cursor**: Agent sub-sessions with `--resume` for multi-turn coordination
 - **Copilot**: Session-based parallel workflows with `--resume`
 
-As all major CLIs converge on this capability, Ralph's interactive session mode provides a unified interface for all of them.
+As all major CLIs converge on this capability, Ralph provides a unified interface for all of them.
 
-## Enabling Agent Teams
+## Configuration
 
-Agent teams is enabled by default in `ralph.config.json`:
+Key settings in `ralph.config.json`:
 
 ```json
 {
-  "agent_teams": true,
   "turns": 50,
   "manager_model": "sonnet"
 }
-```
-
-You can also enable it via the CLI flag if it's not set in your config:
-
-```bash
-ralph start -p PROMPT.md --agent-teams
 ```
 
 ### Claude Code: additional setup
@@ -51,7 +39,7 @@ For Claude Code, Agent Teams must also be enabled in your Claude settings:
 
 ## How it works
 
-When `agent_teams` is `true`, Ralph runs an interactive multi-turn session using a **two-level loop**:
+Ralph runs an interactive multi-turn session using a **two-level loop**:
 
 ### Inner loop (turns)
 
@@ -141,26 +129,6 @@ Or globally in `~/.claude.json`:
   "teammateMode": "tmux"
 }
 ```
-
-## Bash orchestration vs. interactive session mode
-
-Bash orchestration mode is legacy and not actively maintained. It may be broken. Use interactive session mode (`agent_teams: true`) for reliable operation.
-
-| Aspect | Bash orchestration (legacy) | Interactive session (recommended) |
-|--------|-------------------|-------------------|
-| Who orchestrates | Ralph bash scripts | AI orchestrates team; Ralph manages conversation |
-| How agents run | Separate shell processes (true OS parallelism) | AI spawns sub-agents internally |
-| Communication | File-based mailbox in `state/messages/` | AI-native communication (mailbox, task list) |
-| Task coordination | Custom file-based task manager with flock | AI's shared task list |
-| Works with all tools | Yes | Yes (all major CLIs support sub-agents) |
-| Context sharing | Workers are isolated | All teammates share conversation context |
-| Verification | None (trusts completion promise) | Manager AI reads git diff and verifies requirements |
-| Cost | N one-shot calls | Many turns + manager AI calls (higher) |
-| Monitoring | `ralph sessions` (task list) | `ralph sessions` (per-turn/per-attempt logs) |
-
-**Use interactive session mode** (recommended) for intelligent team coordination with shared context, automated plan approval, and requirement verification.
-
-Bash orchestration mode is legacy and not actively maintained.
 
 ## Hooks
 

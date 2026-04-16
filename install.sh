@@ -56,9 +56,7 @@ check_dependencies() {
 set_executable() {
   local base="$1"
   chmod +x "${base}/bin/ralph"
-  chmod +x "${base}/bin/ralph-manager.sh"
-  chmod +x "${base}/bin/ralph-worker.sh"
-  chmod +x "${base}/bin/ralph-review.sh"
+  chmod +x "${base}/bin/ralph-interactive.sh"
   chmod +x "${base}/adapters/claude-code/hooks/"*.sh 2>/dev/null || true
   chmod +x "${base}/adapters/claude-code/ralph-claude-teams.sh" 2>/dev/null || true
   chmod +x "${base}/adapters/claude-code/scripts/"*.sh 2>/dev/null || true
